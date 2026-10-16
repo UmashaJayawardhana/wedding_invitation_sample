@@ -15,6 +15,9 @@ import {
   MapPin,
   Clock,
   Volume2,
+  Home,
+  Image as ImageIcon,
+  MessageCircle,
   VolumeX,
   ChevronLeft,
   ChevronRight,
@@ -28,17 +31,17 @@ import Opening from "../src/components/opening";
 /* ============================================================
    EDIT YOUR DETAILS HERE
 ============================================================ */
-const COUPLE = { one: "Sarah", two: "Deen" };
+const COUPLE = { one: "Nethmi", two: "Kasun" };
 const EVENT = {
   // Asia/Colombo time (UTC+05:30)
   startISO: "2026-12-20T10:00:00+05:30",
   endISO: "2026-12-20T17:00:00+05:30",
   dateText: "20 December 2026",
   timeText: "10:00 AM onwards",
-  venue: "Shangri - La Colombo",
-  mapUrl: "https://maps.app.goo.gl/MUUZPdHpr9QKdEVy9",
+  venue: "Beautiful Wedding Venue",
+  mapUrl: "https://maps.google.com/?q=Colombo",
 };
-const WHATSAPP_NUMBER = "94719275216"; // e.g. "94771234567" – RSVP is sent here
+const WHATSAPP_NUMBER = ""; // e.g. "94771234567" – RSVP is sent here
 const MUSIC_SRC = "/audio/song.mp3"; // optional background music
 const ENDING_IMAGE = "/images/ending.jpg"; // background of the "Thank You" section
 const GALLERY = [
@@ -102,6 +105,7 @@ export default function InvitationPage() {
           >
             <ScrollBar />
             <MusicButton on={musicOn} onClick={toggleMusic} />
+            <BottomNav />
             <Hero />
             <Message />
             <Countdown />
@@ -131,6 +135,83 @@ function ScrollBar() {
 }
 
 /* ============================================================
+   Bottom navigation (icons only, 5 items)
+============================================================ */
+const NAV_ITEMS = [
+  { id: "home", label: "Home", Icon: Home },
+  { id: "invitation", label: "Invitation", Icon: Heart },
+  { id: "venue", label: "Date and venue", Icon: MapPin },
+  { id: "gallery", label: "Gallery", Icon: ImageIcon },
+  { id: "rsvp", label: "Guest messages", Icon: MessageCircle },
+];
+
+function BottomNav() {
+  const [active, setActive] = useState("home");
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) setActive(e.target.id);
+        });
+      },
+      { rootMargin: "-45% 0px -45% 0px" }
+    );
+    NAV_ITEMS.forEach(({ id }) => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  const go = (id: string) => {
+    setActive(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  return (
+    <motion.nav
+      initial={{ y: 80, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ delay: 1, type: "spring", stiffness: 120, damping: 18 }}
+      className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2"
+      aria-label="Sections"
+    >
+      <ul className="flex items-center gap-1 rounded-full border border-[#d6b56d]/60 bg-[#641725]/90 px-2 py-2 shadow-xl backdrop-blur">
+        {NAV_ITEMS.map(({ id, label, Icon }) => {
+          const isActive = active === id;
+          return (
+            <li key={id}>
+              <button
+                type="button"
+                onClick={() => go(id)}
+                aria-label={label}
+                aria-current={isActive ? "true" : undefined}
+                className="relative flex h-11 w-11 items-center justify-center rounded-full"
+              >
+                {isActive && (
+                  <motion.span
+                    layoutId="nav-pill"
+                    className="absolute inset-0 rounded-full bg-[#d6b56d]"
+                    transition={{ type: "spring", stiffness: 350, damping: 28 }}
+                  />
+                )}
+                <motion.span
+                  whileTap={{ scale: 0.8 }}
+                  className={`relative ${isActive ? "text-[#641725]" : "text-[#f5e6c4]"}`}
+                >
+                  <Icon size={20} fill={id === "invitation" && isActive ? "currentColor" : "none"} />
+                </motion.span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </motion.nav>
+  );
+}
+
+/* ============================================================
    Floating music button
 ============================================================ */
 function MusicButton({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -143,7 +224,7 @@ function MusicButton({ on, onClick }: { on: boolean; onClick: () => void }) {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: 1 }}
       aria-label={on ? "Mute music" : "Play music"}
-      className="fixed bottom-5 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full border border-[#d6b56d] bg-[#641725]/90 text-[#f5e6c4] shadow-lg backdrop-blur"
+      className="fixed bottom-24 right-4 z-50 flex h-12 w-12 items-center justify-center rounded-full border border-[#d6b56d] bg-[#641725]/90 text-[#f5e6c4] shadow-lg backdrop-blur"
     >
       {on && (
         <motion.span
@@ -184,6 +265,7 @@ function Hero() {
 
   return (
     <section
+      id="home"
       ref={ref}
       className="relative flex min-h-screen items-center justify-center overflow-hidden"
     >
@@ -280,7 +362,7 @@ function Hero() {
 ============================================================ */
 function Message() {
   return (
-    <section className="bg-[#f7f1e8] px-6 py-24 text-center">
+    <section id="invitation" className="bg-[#f7f1e8] px-6 py-24 text-center">
       <motion.div
         initial={{ opacity: 0, y: 40 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -441,7 +523,7 @@ function Details() {
   };
 
   return (
-    <section className="bg-white px-6 py-24">
+    <section id="venue" className="bg-white px-6 py-24">
       <div className="mx-auto max-w-4xl text-center">
         <p className="mb-4 text-xs uppercase tracking-[0.3em] text-[#a98b59]">
           Save The Date
@@ -505,7 +587,7 @@ function Gallery() {
   }, [active]);
 
   return (
-    <section className="bg-[#f7f1e8] px-6 py-24">
+    <section id="gallery" className="bg-[#f7f1e8] px-6 py-24">
       <div className="mx-auto max-w-5xl text-center">
         <p className="mb-4 text-xs uppercase tracking-[0.3em] text-[#a98b59]">Our Memories</p>
         <h2 className="mb-12 font-serif text-4xl">Wedding Moments</h2>
@@ -624,7 +706,7 @@ function Rsvp() {
   };
 
   return (
-    <section className="bg-white px-6 py-24">
+    <section id="rsvp" className="bg-white px-6 py-24">
       <div className="mx-auto max-w-md text-center">
         <p className="mb-4 text-xs uppercase tracking-[0.3em] text-[#a98b59]">Kindly Reply</p>
         <h2 className="mb-10 font-serif text-4xl">RSVP</h2>
