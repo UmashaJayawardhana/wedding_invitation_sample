@@ -41,7 +41,7 @@ const EVENT = {
   venue: "Beautiful Wedding Venue",
   mapUrl: "https://maps.google.com/?q=Colombo",
 };
-const WHATSAPP_NUMBER = ""; // e.g. "94771234567" – RSVP is sent here
+const WHATSAPP_NUMBER = "94763189219"; // e.g. "94771234567" – RSVP is sent here
 const MUSIC_SRC = "/audio/song.mp3"; // optional background music
 const ENDING_IMAGE = "/images/ending.jpg"; // background of the "Thank You" section
 const GALLERY = [
