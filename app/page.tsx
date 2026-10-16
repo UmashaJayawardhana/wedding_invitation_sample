@@ -26,7 +26,7 @@ import {
   Plus,
   Check,
 } from "lucide-react";
-import Opening from "../src/components/opening";
+import Opening from "@/components/weddingInvi/opening";
 
 /* ============================================================
    EDIT YOUR DETAILS HERE
@@ -59,15 +59,15 @@ const EVENT = {
   mapUrl: "https://maps.google.com/?q=Colombo",
 };
 const WHATSAPP_NUMBER = "94763189219"; // e.g. "94771234567" – RSVP is sent here
-const MUSIC_SRC = "/audio/song.mp3"; // optional background music
-const ENDING_IMAGE = "/images/ending.jpg"; // background of the "Thank You" section
+const MUSIC_SRC = "/audio/weddingInvi/song.mp3"; // optional background music
+const ENDING_IMAGE = "/images/weddingInvi/ending.jpg"; // background of the "Thank You" section
 const GALLERY = [
-  "/images/gallery1.jpg",
-  "/images/gallery2.jpg",
-  "/images/gallery3.jpg",
-  "/images/gallery4.jpg",
-  "/images/gallery5.jpg",
-  "/images/gallery6.jpg",
+  "/images/weddingInvi/gallery1.jpg",
+  "/images/weddingInvi/gallery2.jpg",
+  "/images/weddingInvi/gallery3.jpg",
+  "/images/weddingInvi/gallery4.jpg",
+  "/images/weddingInvi/gallery5.jpg",
+  "/images/weddingInvi/gallery6.jpg",
 ];
 
 export default function InvitationPage() {
@@ -95,7 +95,7 @@ export default function InvitationPage() {
       a.pause();
       setMusicOn(false);
     } else {
-      a.play().then(() => setMusicOn(true)).catch(() => {});
+      a.play().then(() => setMusicOn(true)).catch(() => { });
     }
   };
 
@@ -288,7 +288,7 @@ function Hero() {
     >
       <motion.div style={{ y: bgY }} className="absolute inset-0 -top-10 -bottom-10">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/images/hero.jpg" alt="Wedding" className="h-full w-full object-cover" />
+        <img src="/images/weddingInvi/hero.jpg" alt="Wedding" className="h-full w-full object-cover" />
         <div className="absolute inset-0 bg-black/30" />
       </motion.div>
 
@@ -828,11 +828,10 @@ function Rsvp() {
                     type="button"
                     whileTap={{ scale: 0.95 }}
                     onClick={() => setAttending(o.v)}
-                    className={`rounded-xl border px-3 py-3 text-xs tracking-wide transition ${
-                      attending === o.v
+                    className={`rounded-xl border px-3 py-3 text-xs tracking-wide transition ${attending === o.v
                         ? "border-[#641725] bg-[#641725] text-[#f5e6c4]"
                         : "border-[#e8dcc9] bg-white text-[#76675c]"
-                    }`}
+                      }`}
                   >
                     {o.label}
                   </motion.button>

@@ -3,13 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-const VIDEO_SRC = "/videos/opening.mp4"; // your 10s opening video
+const VIDEO_SRC = "/videos/weddingInvi/opening.mp4"; // your 10s opening video
 const VIDEO_DURATION_MS = 10000;
 
 // Couple photo shown inside the envelope card (put the file in /public/images)
-const COUPLE_PHOTO = "/images/couple.jpg";
+const COUPLE_PHOTO = "/images/weddingInvi/couple.jpg";
 // Envelope artwork (transparent window where the card is)
-const ENVELOPE_IMG = "/images/envelope.webp";
+const ENVELOPE_IMG = "/images/weddingInvi/envelope.webp";
 const ENVELOPE_ASPECT = 2106 / 2016;
 
 const NAME_ONE = "Sarah";
@@ -194,8 +194,8 @@ export default function Opening({ onOpen }: OpeningProps) {
             stage !== "envelope"
               ? {}
               : envelopeOpened
-              ? { opacity: 0, scale: 1.15, y: 0 }
-              : { opacity: 1, scale: 1, y: 0 }
+                ? { opacity: 0, scale: 1.15, y: 0 }
+                : { opacity: 1, scale: 1, y: 0 }
           }
           transition={{ duration: envelopeOpened ? 1.1 : 1, ease: "easeOut" }}
           className="relative"
