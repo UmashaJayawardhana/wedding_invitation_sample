@@ -31,7 +31,7 @@ import Opening from "../src/components/opening";
 /* ============================================================
    EDIT YOUR DETAILS HERE
 ============================================================ */
-const COUPLE = { one: "Nethmi", two: "Kasun" };
+const COUPLE = { one: "Sarah", two: "Deen" };
 const EVENT = {
   // Asia/Colombo time (UTC+05:30)
   startISO: "2026-12-20T10:00:00+05:30",
