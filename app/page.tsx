@@ -32,6 +32,23 @@ import Opening from "../src/components/opening";
    EDIT YOUR DETAILS HERE
 ============================================================ */
 const COUPLE = { one: "Sarah", two: "Deen" };
+// Family details – replace the placeholder names with your real ones
+const FAMILY = {
+  bride: {
+    role: "The Bride",
+    fullName: "Sarah Perera",
+    parents: "Daughter of Mr. & Mrs. Perera",
+
+
+  },
+  groom: {
+    role: "The Groom",
+    fullName: "Deen Silva",
+    parents: "Son of Mr. & Mrs. Silva",
+
+
+  },
+};
 const EVENT = {
   // Asia/Colombo time (UTC+05:30)
   startISO: "2026-12-20T10:00:00+05:30",
@@ -368,7 +385,7 @@ function Message() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: "-80px" }}
         transition={{ duration: 0.8 }}
-        className="mx-auto max-w-2xl"
+        className="mx-auto max-w-3xl"
       >
         <motion.div
           animate={{ rotate: [0, 15, -15, 0], scale: [1, 1.15, 1] }}
@@ -382,12 +399,60 @@ function Message() {
           A Beautiful Beginning
         </p>
         <h2 className="mb-8 font-serif text-4xl md:text-5xl">We’re Getting Married</h2>
-        <p className="leading-8 text-[#76675c]">
-          Two hearts, two families and one beautiful journey. We would be
+        <p className="mb-12 leading-8 text-[#76675c]">
+          With the blessings of our parents and loved ones, two hearts, two
+          families and one beautiful journey become one. We would be
           delighted to have you with us as we celebrate our special day.
+        </p>
+
+        <div className="grid gap-6 md:grid-cols-[1fr_auto_1fr] md:items-center">
+          <FamilyCard person={FAMILY.bride} delay={0} />
+
+          <motion.div
+            initial={{ scale: 0 }}
+            whileInView={{ scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ type: "spring", delay: 0.3 }}
+            className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#641725] text-[#e3c783]"
+          >
+            <Heart size={22} fill="currentColor" />
+          </motion.div>
+
+          <FamilyCard person={FAMILY.groom} delay={0.15} />
+        </div>
+
+        <p className="mt-12 font-serif text-xl italic text-[#641725]">
+          request the pleasure of your company
         </p>
       </motion.div>
     </section>
+  );
+}
+
+function FamilyCard({
+  person,
+  delay,
+}: {
+  person: (typeof FAMILY)["bride"];
+  delay: number;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ delay, duration: 0.7 }}
+      whileHover={{ y: -6 }}
+      className="rounded-3xl border border-[#e8dcc9] bg-[#fffdf9] px-6 py-8 shadow-sm"
+    >
+      <p className="mb-3 text-[10px] uppercase tracking-[0.3em] text-[#a98b59]">
+        {person.role}
+      </p>
+      <h3 className="mb-4 font-serif text-2xl text-[#5d4a3d]">{person.fullName}</h3>
+      <div className="mx-auto mb-4 h-px w-12 bg-[#d6b56d]" />
+      <p className="text-sm leading-7 text-[#76675c]">{person.parents}</p>
+
+    </motion.div>
   );
 }
 
