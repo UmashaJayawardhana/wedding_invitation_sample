@@ -3,14 +3,14 @@
 import { use, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 
-import Opening from "@/components/Opening";
-import Hero from "@/components/Hero";
-import InvitationMessage from "@/components/InvitationMessage";
-import CoupleStory from "@/components/CoupleStory";
-import EventDetails from "@/components/EventDetails";
-import Countdown from "@/components/Countdown";
-import WeddingGallery from "@/components/WeddingGallery";
-import GuestWishes from "@/components/GuestWishes";
+import Opening from "@/components/wedding1/Opening";
+import Hero from "@/components/wedding1/Hero";
+import InvitationMessage from "@/components/wedding1/InvitationMessage";
+import CoupleStory from "@/components/wedding1/CoupleStory";
+import EventDetails from "@/components/wedding1/EventDetails";
+import Countdown from "@/components/wedding1/Countdown";
+import WeddingGallery from "@/components/wedding1/WeddingGallery";
+import GuestWishes from "@/components/wedding1/GuestWishes";
 
 interface PageProps {
   params: Promise<{
