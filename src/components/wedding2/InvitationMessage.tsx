@@ -4,7 +4,7 @@
 import { motion } from "framer-motion";
 import { Heart, Waves } from "lucide-react";
 
-type InvitationType = "single" | "couple" | "family";
+export type InvitationType = "single" | "couple" | "family" | string;
 
 interface InvitationMessageProps {
   guestName?: string;
@@ -13,29 +13,53 @@ interface InvitationMessageProps {
 
 export default function InvitationMessage({
   guestName = "Alex",
-  invitationType = "single",
+  invitationType,
 }: InvitationMessageProps) {
+  // Normalize the invitation type from the parent page or database.
+  const rawType = String(invitationType ?? "single")
+    .trim()
+    .toLowerCase();
+
+  const activeType: "single" | "couple" | "family" =
+    rawType.includes("family") || rawType === "3"
+      ? "family"
+      : rawType.includes("couple") || rawType === "2"
+        ? "couple"
+        : "single";
+
+  const cleanGuestName = guestName.trim() || "Guest";
+  const lowerName = cleanGuestName.toLowerCase();
+
+  const coupleGreeting =
+    cleanGuestName.includes("&") ||
+    lowerName.includes(" and ") ||
+    lowerName.endsWith(" & partner")
+      ? `Dear ${cleanGuestName}`
+      : `Dear ${cleanGuestName} & Partner`;
+
+  const familyGreeting = lowerName.endsWith("family")
+    ? `Dear ${cleanGuestName}`
+    : `Dear ${cleanGuestName} & Family`;
+
   const invitationContent = {
     single: {
-      greeting: `Dear ${guestName}`,
+      greeting: `Dear ${cleanGuestName}`,
       introduction:
         "As the ocean meets the shore and the sunset paints the sky, we invite you to share in the beginning of our forever.",
       message:
         "Your presence would make our special day even more beautiful. Join us as we celebrate love, laughter, and the promise of a lifetime together.",
       closing: "We can't wait to celebrate with you",
     },
-
     couple: {
-      greeting: `Dear ${guestName}`,
+      greeting: coupleGreeting,
       introduction:
         "As the ocean meets the shore and the sunset paints the sky, we invite you both to share in the beginning of our forever.",
       message:
         "It would mean so much to have you both with us on our special day. Join us as we celebrate love, laughter, and the beautiful journey of a lifetime together.",
       closing: "We can't wait to celebrate with you both",
     },
-
     family: {
-      greeting: `Dear ${guestName} Family`,
+      greeting: familyGreeting,
       introduction:
         "As the ocean meets the shore and the sunset paints the sky, we warmly invite your family to share in the beginning of our forever.",
       message:
@@ -44,7 +68,7 @@ export default function InvitationMessage({
     },
   };
 
-  const content = invitationContent[invitationType];
+  const content = invitationContent[activeType];
 
   return (
     <section
@@ -70,7 +94,6 @@ export default function InvitationMessage({
         transition={{ duration: 0.9 }}
         className="relative z-10 my-auto w-full max-w-2xl border border-[#d6bd96]/80 bg-[#fffaf1]/90 px-6 py-8 shadow-2xl backdrop-blur-sm sm:px-12 sm:py-10 md:px-16"
       >
-        {/* Heart decoration */}
         <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-[#c6ad86]/70">
           <Heart
             className="h-5 w-5 text-[#b78e68]"
@@ -82,7 +105,6 @@ export default function InvitationMessage({
           A special invitation for
         </p>
 
-        {/* Guest greeting */}
         <h2 className="mt-3 break-words font-serif text-4xl italic text-[#426969] sm:text-5xl md:text-6xl">
           {content.greeting}
         </h2>
@@ -108,7 +130,6 @@ export default function InvitationMessage({
           {content.message}
         </p>
 
-        {/* Couple names */}
         <div className="mt-6">
           <p className="font-serif text-2xl text-[#426969] sm:text-3xl">
             Olivia{" "}

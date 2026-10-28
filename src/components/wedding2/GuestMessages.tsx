@@ -1,322 +1,603 @@
 
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import {
   Heart,
+  MessageCircle,
+  Send,
   CheckCircle2,
   XCircle,
-  Send,
+  Users,
+  Loader2,
 } from "lucide-react";
-
-interface GuestMessage {
-  id: number;
-  name: string;
+import { supabase } from "@/lib/supabase";
+//import type { WeddingInvitationRecord } from "@/app/wedding2/[eventId]/[invitationtype]/[guestname]/page";
+interface WeddingInvitationRecord {
+  wedding_invitation_id: number;
+  event_id: number;
+  guest_token?: string | null;
+  guest_name?: string | null;
+  number_of_guests?: number | null;
+  rsvp_status?: string | null;
+  attending_count?: number | null;
+  responded_at?: string | null;
+}
+interface GuestWish {
+  wish_id?: number;
+  event_id: number;
+  guest_name: string;
   message: string;
-  createdAt: string;
+  created_at?: string;
 }
 
 interface GuestMessagesProps {
   guestName: string;
-  invitationId: string;
+  invitationId: string | number;
   guestCount: number;
+  invitation?: WeddingInvitationRecord | null;
 }
+
+type RSVPStatus = "accepted" | "declined" | null;
 
 export default function GuestMessages({
   guestName,
   invitationId,
   guestCount,
+  invitation,
 }: GuestMessagesProps) {
-  // Ensure the invited guest count is at least 1.
-  const maxGuests = Math.max(
-    1,
-    Number.isFinite(guestCount) ? Math.floor(guestCount) : 1
-  );
-
-  const [name, setName] = useState(guestName || "");
+  const [wishes, setWishes] = useState<GuestWish[]>([]);
   const [message, setMessage] = useState("");
+  const [response, setResponse] = useState<RSVPStatus>(
+    invitation?.rsvp_status === "accepted" ||
+      invitation?.rsvp_status === "declined"
+      ? invitation.rsvp_status
+      : null
+  );
+  const [attendingCount, setAttendingCount] = useState<number>(
+    Number(invitation?.attending_count ?? guestCount ?? 1)
+  );
+  const [loadingWishes, setLoadingWishes] = useState(true);
+  const [savingRSVP, setSavingRSVP] = useState(false);
+  const [savingMessage, setSavingMessage] = useState(false);
+  const [updatingCount, setUpdatingCount] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const [response, setResponse] = useState<
-    "accepted" | "declined" | null
-  >(null);
+  /*
+   * Resolve the actual invitation record.
+   * invitationId should preferably be the guest_token from the URL record.
+   */
+  const resolveInvitationId = useCallback(async (): Promise<number> => {
+    if (invitation?.wedding_invitation_id) {
+      return Number(invitation.wedding_invitation_id);
+    }
 
-  const [attendingCount, setAttendingCount] = useState(maxGuests);
+    const suppliedId = String(invitationId ?? "").trim();
 
-  const [messages, setMessages] = useState<GuestMessage[]>([]);
-  const [submitted, setSubmitted] = useState(false);
+    if (!suppliedId) {
+      throw new Error("The invitation reference is missing.");
+    }
 
-  function handleRSVP(choice: "accepted" | "declined") {
-    setResponse(choice);
-  }
+    // First, try to resolve the invitation using its guest token.
+    const {
+      data: tokenData,
+      error: tokenError,
+    } = await supabase
+      .from("wedding_invitations")
+      .select("wedding_invitation_id")
+      .eq("guest_token", suppliedId)
+      .maybeSingle();
 
-  function decreaseGuestCount() {
-    setAttendingCount((count) => Math.max(1, count - 1));
-  }
+    if (tokenError) {
+      console.error("Error finding invitation by token:", tokenError);
+      throw new Error(tokenError.message);
+    }
 
-  function increaseGuestCount() {
-    setAttendingCount((count) =>
-      Math.min(maxGuests, count + 1)
+    if (tokenData?.wedding_invitation_id) {
+      return Number(tokenData.wedding_invitation_id);
+    }
+
+    // If the supplied value is numeric, try it as the primary key.
+    const numericId = Number(suppliedId);
+
+    if (Number.isInteger(numericId) && numericId > 0) {
+      const {
+        data: idData,
+        error: idError,
+      } = await supabase
+        .from("wedding_invitations")
+        .select("wedding_invitation_id")
+        .eq("wedding_invitation_id", numericId)
+        .maybeSingle();
+
+      if (idError) {
+        console.error("Error finding invitation by ID:", idError);
+        throw new Error(idError.message);
+      }
+
+      if (idData?.wedding_invitation_id) {
+        return Number(idData.wedding_invitation_id);
+      }
+    }
+
+    throw new Error(
+      "Invitation not found. Please check the invitation ID or guest token."
     );
-  }
+  }, [invitation, invitationId]);
 
-  function handleMessageSubmit(
-    event: FormEvent<HTMLFormElement>
-  ) {
+  /*
+   * Load guest messages from the wishes table.
+   */
+  const loadWishes = useCallback(async () => {
+    setLoadingWishes(true);
+
+    try {
+      const eventId = Number(invitation?.event_id);
+
+      if (!Number.isInteger(eventId) || eventId <= 0) {
+        throw new Error("The event ID is missing from this invitation.");
+      }
+
+      const { data, error } = await supabase
+        .from("wishes")
+        .select("wish_id, event_id, guest_name, message, created_at")
+        .eq("event_id", eventId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error("Error loading wishes:", error);
+        throw new Error(error.message);
+      }
+
+      setWishes((data ?? []) as GuestWish[]);
+    } catch (error) {
+      console.error("Could not load guest messages:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not load guest messages."
+      );
+    } finally {
+      setLoadingWishes(false);
+    }
+  }, [invitation?.event_id]);
+
+  useEffect(() => {
+    void loadWishes();
+  }, [loadWishes]);
+
+  /*
+   * Save RSVP to the actual invitation record.
+   */
+  const handleRSVP = async (status: Exclude<RSVPStatus, null>) => {
+    if (savingRSVP) return;
+
+    setSavingRSVP(true);
+    setFeedback("");
+    setErrorMessage("");
+
+    try {
+      const activeInvitationId = await resolveInvitationId();
+
+      const newAttendingCount =
+        status === "accepted"
+          ? Math.max(1, Number(attendingCount) || Number(guestCount) || 1)
+          : 0;
+
+      const { data, error } = await supabase
+        .from("wedding_invitations")
+        .update({
+          rsvp_status: status,
+          attending_count: newAttendingCount,
+          responded_at: new Date().toISOString(),
+        })
+        .eq("wedding_invitation_id", activeInvitationId)
+        .select(
+          "wedding_invitation_id, rsvp_status, attending_count"
+        )
+        .maybeSingle();
+
+      if (error) {
+        console.error("Error saving RSVP:", error);
+        throw new Error(error.message);
+      }
+
+      if (!data) {
+        throw new Error(
+          "No invitation was updated. Check the invitation ID and Supabase UPDATE permissions."
+        );
+      }
+
+      setResponse(data.rsvp_status as RSVPStatus);
+      setAttendingCount(Number(data.attending_count ?? 0));
+      setFeedback(
+        status === "accepted"
+          ? "Thank you! Your attendance has been confirmed."
+          : "Your response has been recorded. Thank you."
+      );
+    } catch (error) {
+      console.error("RSVP save failed:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to save your RSVP. Please try again."
+      );
+    } finally {
+      setSavingRSVP(false);
+    }
+  };
+
+  /*
+   * Update the number of attendees for an accepted RSVP.
+   */
+  const updateCountInSupabase = async (newCount: number) => {
+    if (updatingCount || response !== "accepted") return;
+
+    const safeCount = Math.max(
+      1,
+      Math.min(Number(guestCount) || 1, Math.floor(newCount))
+    );
+
+    setUpdatingCount(true);
+    setFeedback("");
+    setErrorMessage("");
+
+    try {
+      const activeInvitationId = await resolveInvitationId();
+
+      const { data, error } = await supabase
+        .from("wedding_invitations")
+        .update({
+          attending_count: safeCount,
+          responded_at: new Date().toISOString(),
+        })
+        .eq("wedding_invitation_id", activeInvitationId)
+        .eq("rsvp_status", "accepted")
+        .select("wedding_invitation_id, attending_count")
+        .maybeSingle();
+
+      if (error) {
+        console.error("Error updating attending count:", error);
+        throw new Error(error.message);
+      }
+
+      if (!data) {
+        throw new Error(
+          "The guest count was not updated. Check the RSVP status and database permissions."
+        );
+      }
+
+      setAttendingCount(Number(data.attending_count));
+      setFeedback("Your guest count has been updated.");
+    } catch (error) {
+      console.error("Guest count update failed:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not update the guest count."
+      );
+    } finally {
+      setUpdatingCount(false);
+    }
+  };
+
+  /*
+   * Insert a new guest message into the wishes table.
+   */
+  const handleMessageSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!name.trim() || !message.trim()) return;
+    const trimmedMessage = message.trim();
 
-    const newMessage: GuestMessage = {
-      id: Date.now(),
-      name: name.trim(),
-      message: message.trim(),
-      createdAt: new Date().toLocaleDateString(),
-    };
+    if (!trimmedMessage) {
+      setErrorMessage("Please enter a message before submitting.");
+      return;
+    }
 
-    setMessages((previous) => [newMessage, ...previous]);
-    setMessage("");
-    setSubmitted(true);
-  }
+    if (savingMessage) return;
+
+    setSavingMessage(true);
+    setFeedback("");
+    setErrorMessage("");
+
+    try {
+      const eventId = Number(invitation?.event_id);
+
+      if (!Number.isInteger(eventId) || eventId <= 0) {
+        throw new Error(
+          "The event ID is missing. Please check the invitation page."
+        );
+      }
+
+      const { data, error } = await supabase
+        .from("wishes")
+        .insert({
+          event_id: eventId,
+          guest_name: guestName.trim() || "Guest",
+          message: trimmedMessage,
+        })
+        .select("wish_id, event_id, guest_name, message, created_at")
+        .single();
+
+      if (error) {
+        console.error("Error saving guest message:", error);
+        throw new Error(error.message);
+      }
+
+      if (!data) {
+        throw new Error("Supabase did not return the saved message.");
+      }
+
+      setWishes((current) => [data as GuestWish, ...current]);
+      setMessage("");
+      setFeedback("Your message has been saved. Thank you!");
+    } catch (error) {
+      console.error("Guest message save failed:", error);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to save your message. Please try again."
+      );
+    } finally {
+      setSavingMessage(false);
+    }
+  };
 
   return (
     <section
-      id="wishes"
-      className="relative overflow-hidden bg-[#f8f3eb] px-5 py-20 text-[#24434a] sm:px-8 md:py-28"
+      id="guest-messages"
+      className="relative overflow-hidden bg-[#fbf7f1] px-5 py-20 text-[#49382d] md:px-8"
     >
-      <div className="mx-auto max-w-5xl">
-        {/* SECTION HEADER */}
+      <div className="mx-auto max-w-4xl">
+        {/* Section heading */}
         <div className="mb-12 text-center">
           <Heart
-            className="mx-auto mb-4 text-[#bd9b67]"
+            className="mx-auto mb-4 text-[#b99572]"
             size={30}
             strokeWidth={1.3}
           />
 
-          <p className="mb-3 text-xs uppercase tracking-[0.35em] text-[#9b805b]">
-            Olivia & Thomas
+          <p className="text-xs uppercase tracking-[0.35em] text-[#92795c]">
+            A little note from you
           </p>
 
-          <h2 className="font-[var(--font-great-vibes)] text-5xl sm:text-6xl">
-            Guest Messages & RSVP
+          <h2 className="mt-3 font-serif text-3xl md:text-5xl">
+            RSVP & Guest Wishes
           </h2>
 
-          <p className="mx-auto mt-5 max-w-xl text-sm leading-7 text-[#647579]">
-            Your presence would mean the world to us.
-            Please let us know if you can join our special day
-            and leave us a little message of love.
+          <p className="mx-auto mt-4 max-w-lg text-sm leading-7 text-[#92795c]">
+            Your presence means so much to us. Please let us know if you can
+            join us, and leave a message for our special day.
           </p>
         </div>
 
-        {/* RSVP FORM */}
-        <div className="mx-auto mb-14 max-w-2xl rounded-3xl border border-[#e6d8c3] bg-white p-6 shadow-sm sm:p-10">
-          <h3 className="mb-7 text-center text-2xl">
-            Will you join us?
-          </h3>
+        {/* RSVP card */}
+        <div className="mb-8 rounded-3xl border border-[#ddc9b1] bg-white/70 p-6 shadow-sm md:p-8">
+          <div className="mb-6 flex items-center gap-3">
+            <Users className="text-[#b99572]" size={24} />
 
-          {/* INVITED GUEST COUNT */}
-          <div className="mb-7 rounded-2xl border border-[#e6d8c3] bg-[#fffdf9] p-5">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-[#24434a]">
-                  Invited Guests
-                </p>
-
-                <p className="mt-1 break-words text-xs text-[#647579]">
-                  {guestName || "Guest"} · Maximum {maxGuests}{" "}
-                  {maxGuests === 1 ? "guest" : "guests"}
-                </p>
-              </div>
-
-              <span className="shrink-0 rounded-full bg-[#e9dfce] px-3 py-2 text-sm font-semibold text-[#24434a]">
-                {attendingCount}{" "}
-                {attendingCount === 1 ? "Guest" : "Guests"}
-              </span>
+            <div>
+              <h3 className="font-serif text-2xl">Will you join us?</h3>
+              <p className="mt-1 text-sm text-[#92795c]">
+                Kindly share your response.
+              </p>
             </div>
-
-            <div className="mt-5 flex items-center justify-center gap-6">
-              <button
-                type="button"
-                onClick={decreaseGuestCount}
-                disabled={attendingCount <= 1}
-                aria-label="Decrease guest count"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#d9c7ac] text-2xl transition hover:bg-[#e9dfce] disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                −
-              </button>
-
-              <span
-                aria-live="polite"
-                className="min-w-10 text-center text-3xl font-semibold text-[#24434a]"
-              >
-                {attendingCount}
-              </span>
-
-              <button
-                type="button"
-                onClick={increaseGuestCount}
-                disabled={attendingCount >= maxGuests}
-                aria-label="Increase guest count"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-[#d9c7ac] text-2xl transition hover:bg-[#e9dfce] disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                +
-              </button>
-            </div>
-
-            <p className="mt-3 text-center text-xs text-[#647579]">
-              Select how many invited guests will attend.
-            </p>
           </div>
 
-          {/* RSVP BUTTONS */}
           <div className="grid gap-4 sm:grid-cols-2">
             <button
               type="button"
-              onClick={() => handleRSVP("accepted")}
-              aria-pressed={response === "accepted"}
-              className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-4 transition ${
+              disabled={savingRSVP}
+              onClick={() => void handleRSVP("accepted")}
+              className={`flex items-center justify-center gap-2 rounded-full border px-5 py-4 text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
                 response === "accepted"
-                  ? "border-[#a58a61] bg-[#e9dfce] text-[#24434a]"
-                  : "border-[#e6d8c3] hover:bg-[#f8f3eb]"
+                  ? "border-[#8b9b76] bg-[#e8eddf] text-[#425238]"
+                  : "border-[#ddc9b1] bg-white hover:bg-[#f5efe6]"
               }`}
             >
-              <CheckCircle2 size={20} />
-              Joyfully Accept
+              {savingRSVP ? (
+                <Loader2 className="animate-spin" size={18} />
+              ) : (
+                <CheckCircle2 size={18} />
+              )}
+              Yes, I'll be there
             </button>
 
             <button
               type="button"
-              onClick={() => handleRSVP("declined")}
-              aria-pressed={response === "declined"}
-              className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-4 transition ${
+              disabled={savingRSVP}
+              onClick={() => void handleRSVP("declined")}
+              className={`flex items-center justify-center gap-2 rounded-full border px-5 py-4 text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
                 response === "declined"
-                  ? "border-[#a58a61] bg-[#e9dfce] text-[#24434a]"
-                  : "border-[#e6d8c3] hover:bg-[#f8f3eb]"
+                  ? "border-[#c89da5] bg-[#f7e9eb] text-[#784d56]"
+                  : "border-[#ddc9b1] bg-white hover:bg-[#f5efe6]"
               }`}
             >
-              <XCircle size={20} />
-              Regretfully Decline
+              {savingRSVP ? (
+                <Loader2 className="animate-spin" size={18} />
+              ) : (
+                <XCircle size={18} />
+              )}
+              Sorry, can't make it
             </button>
           </div>
 
-          {response && (
-            <p className="mt-5 text-center text-sm text-[#647579]">
-              {response === "accepted"
-                ? `Thank you! You have accepted the invitation for ${attendingCount} ${
-                    attendingCount === 1 ? "guest" : "guests"
-                  }.`
-                : "Thank you for letting us know. Your response is regretfully decline."}
-            </p>
+          {response === "accepted" && (
+            <div className="mt-6 rounded-2xl bg-[#f5efe6] p-5">
+              <label
+                htmlFor="attendingCount"
+                className="mb-3 block text-sm text-[#6e5947]"
+              >
+                Number of guests attending
+              </label>
+
+              <div className="flex items-center gap-4">
+                <select
+                  id="attendingCount"
+                  value={attendingCount}
+                  disabled={updatingCount || savingRSVP}
+                  onChange={(event) => {
+                    void updateCountInSupabase(Number(event.target.value));
+                  }}
+                  className="w-full rounded-xl border border-[#ddc9b1] bg-white px-4 py-3 outline-none focus:border-[#b99572] disabled:opacity-60"
+                >
+                  {Array.from(
+                    {
+                      length: Math.max(1, Number(guestCount) || 1),
+                    },
+                    (_, index) => index + 1
+                  ).map((count) => (
+                    <option key={count} value={count}>
+                      {count} {count === 1 ? "guest" : "guests"}
+                    </option>
+                  ))}
+                </select>
+
+                {updatingCount && (
+                  <Loader2
+                    size={20}
+                    className="shrink-0 animate-spin text-[#92795c]"
+                  />
+                )}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* GUEST MESSAGE FORM */}
-        <div className="mx-auto mb-16 max-w-2xl">
-          <div className="mb-7 text-center">
-            <h3 className="font-[var(--font-great-vibes)] text-4xl">
-              Leave a Message
-            </h3>
+        {/* Guest message form */}
+        <div className="mb-10 rounded-3xl border border-[#ddc9b1] bg-white/70 p-6 shadow-sm md:p-8">
+          <div className="mb-5 flex items-center gap-3">
+            <MessageCircle className="text-[#b99572]" size={24} />
 
-            <p className="mt-3 text-sm text-gray-500">
-              Share your wishes with the happy couple.
-            </p>
+            <div>
+              <h3 className="font-serif text-2xl">Leave a wish</h3>
+              <p className="mt-1 text-sm text-[#92795c]">
+                Send the couple a lovely message.
+              </p>
+            </div>
           </div>
 
-          <form
-            onSubmit={handleMessageSubmit}
-            className="space-y-5 rounded-3xl border border-[#e6d8c3] bg-white p-6 shadow-sm sm:p-9"
-          >
-            <div>
-              <label
-                htmlFor="guest-name"
-                className="mb-2 block text-sm font-medium"
-              >
-                Your name
-              </label>
+          <form onSubmit={handleMessageSubmit} className="space-y-4">
+            <textarea
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="Write your wishes for the couple..."
+              rows={4}
+              maxLength={1000}
+              required
+              disabled={savingMessage}
+              className="w-full resize-y rounded-2xl border border-[#ddc9b1] bg-white px-5 py-4 text-sm leading-7 outline-none transition placeholder:text-[#b4a18e] focus:border-[#b99572] disabled:opacity-60"
+            />
 
-              <input
-                id="guest-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Enter your name"
-                maxLength={100}
-                required
-                className="w-full rounded-xl border border-[#e6d8c3] bg-[#fffdf9] px-4 py-3 outline-none focus:border-[#a58a61]"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="guest-message"
-                className="mb-2 block text-sm font-medium"
-              >
-                Your message
-              </label>
-
-              <textarea
-                id="guest-message"
-                value={message}
-                onChange={(event) => setMessage(event.target.value)}
-                placeholder="Write your wishes for Olivia & Thomas..."
-                rows={5}
-                maxLength={1000}
-                required
-                className="w-full resize-y rounded-xl border border-[#e6d8c3] bg-[#fffdf9] px-4 py-3 outline-none focus:border-[#a58a61]"
-              />
-
-              <p className="mt-1 text-right text-xs text-gray-400">
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs text-[#92795c]">
                 {message.length}/1000
-              </p>
+              </span>
+
+              <button
+                type="submit"
+                disabled={savingMessage || !message.trim()}
+                className="flex items-center justify-center gap-2 rounded-full bg-[#49382d] px-6 py-3 text-sm text-white transition hover:bg-[#6a5140] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingMessage ? (
+                  <Loader2 className="animate-spin" size={17} />
+                ) : (
+                  <Send size={16} />
+                )}
+                {savingMessage ? "Sending..." : "Send wish"}
+              </button>
             </div>
-
-            <button
-              type="submit"
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#24434a] px-6 py-4 text-white transition hover:bg-[#365c64]"
-            >
-              <Send size={17} />
-              Send Your Wishes
-            </button>
-
-            {submitted && (
-              <p className="text-center text-sm text-green-700">
-                Your message has been added to this page. Thank you!
-              </p>
-            )}
           </form>
         </div>
 
-        {/* DISPLAY MESSAGES */}
+        {/* Feedback */}
+        {feedback && (
+          <div
+            role="status"
+            className="mb-6 rounded-2xl border border-[#c8d6bd] bg-[#edf3e8] px-5 py-4 text-sm text-[#425238]"
+          >
+            {feedback}
+          </div>
+        )}
+
+        {errorMessage && (
+          <div
+            role="alert"
+            className="mb-6 rounded-2xl border border-[#e2bfc4] bg-[#f9ebed] px-5 py-4 text-sm leading-6 text-[#784d56]"
+          >
+            {errorMessage}
+          </div>
+        )}
+
+        {/* Wishes list */}
         <div>
-          <h3 className="mb-8 text-center font-[var(--font-great-vibes)] text-4xl">
-            Words of Love
-          </h3>
+          <div className="mb-6 flex items-center justify-between gap-4">
+            <h3 className="font-serif text-2xl">Messages from loved ones</h3>
 
-          {messages.length === 0 ? (
-            <p className="text-center text-sm text-gray-500">
-              Be the first to leave a message for the happy couple.
-            </p>
+            <span className="rounded-full border border-[#ddc9b1] px-3 py-1 text-xs text-[#92795c]">
+              {wishes.length} {wishes.length === 1 ? "message" : "messages"}
+            </span>
+          </div>
+
+          {loadingWishes ? (
+            <div className="flex items-center justify-center gap-3 py-10 text-sm text-[#92795c]">
+              <Loader2 className="animate-spin" size={20} />
+              Loading messages...
+            </div>
+          ) : wishes.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-[#ddc9b1] px-6 py-10 text-center">
+              <MessageCircle
+                className="mx-auto mb-3 text-[#b99572]"
+                size={28}
+                strokeWidth={1.3}
+              />
+
+              <p className="font-serif text-xl">Be the first to leave a wish</p>
+
+              <p className="mt-2 text-sm text-[#92795c]">
+                Your kind words will make the day even more special.
+              </p>
+            </div>
           ) : (
-            <div className="grid gap-5 md:grid-cols-2">
-              {messages.map((item) => (
+            <div className="space-y-4">
+              {wishes.map((wish, index) => (
                 <article
-                  key={item.id}
-                  className="rounded-2xl border border-[#e6d8c3] bg-white p-6"
+                  key={wish.wish_id ?? `${wish.created_at}-${index}`}
+                  className="rounded-2xl border border-[#ddc9b1] bg-white/70 p-5 md:p-6"
                 >
-                  <Heart
-                    size={19}
-                    className="mb-4 text-[#bd9b67]"
-                  />
+                  <div className="mb-3 flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#f1e5d8]">
+                      <Heart
+                        size={17}
+                        className="text-[#b99572]"
+                        strokeWidth={1.5}
+                      />
+                    </div>
 
-                  <p className="whitespace-pre-wrap break-words leading-7">
-                    {item.message}
-                  </p>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">
+                        {wish.guest_name || "Guest"}
+                      </p>
 
-                  <div className="mt-5 border-t border-[#eee4d6] pt-4">
-                    <p className="font-medium">{item.name}</p>
-
-                    <p className="mt-1 text-xs text-gray-400">
-                      {item.createdAt}
-                    </p>
+                      {wish.created_at && (
+                        <p className="mt-1 text-xs text-[#92795c]">
+                          {new Date(wish.created_at).toLocaleDateString(
+                            undefined,
+                            {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                            }
+                          )}
+                        </p>
+                      )}
+                    </div>
                   </div>
+
+                  <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#6e5947]">
+                    {wish.message}
+                  </p>
                 </article>
               ))}
             </div>
