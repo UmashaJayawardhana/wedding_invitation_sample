@@ -12,7 +12,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-//import type { WeddingInvitationRecord } from "@/app/wedding2/[eventId]/[invitationtype]/[guestname]/page";
+
 interface WeddingInvitationRecord {
   wedding_invitation_id: number;
   event_id: number;
@@ -23,6 +23,7 @@ interface WeddingInvitationRecord {
   attending_count?: number | null;
   responded_at?: string | null;
 }
+
 interface GuestWish {
   wish_id?: number;
   event_id: number;
@@ -48,25 +49,28 @@ export default function GuestMessages({
 }: GuestMessagesProps) {
   const [wishes, setWishes] = useState<GuestWish[]>([]);
   const [message, setMessage] = useState("");
+
   const [response, setResponse] = useState<RSVPStatus>(
     invitation?.rsvp_status === "accepted" ||
       invitation?.rsvp_status === "declined"
       ? invitation.rsvp_status
       : null
   );
+
   const [attendingCount, setAttendingCount] = useState<number>(
     Number(invitation?.attending_count ?? guestCount ?? 1)
   );
+
   const [loadingWishes, setLoadingWishes] = useState(true);
   const [savingRSVP, setSavingRSVP] = useState(false);
   const [savingMessage, setSavingMessage] = useState(false);
   const [updatingCount, setUpdatingCount] = useState(false);
+
   const [feedback, setFeedback] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
   /*
-   * Resolve the actual invitation record.
-   * invitationId should preferably be the guest_token from the URL record.
+   * Resolve the invitation's primary key.
    */
   const resolveInvitationId = useCallback(async (): Promise<number> => {
     if (invitation?.wedding_invitation_id) {
@@ -79,18 +83,14 @@ export default function GuestMessages({
       throw new Error("The invitation reference is missing.");
     }
 
-    // First, try to resolve the invitation using its guest token.
-    const {
-      data: tokenData,
-      error: tokenError,
-    } = await supabase
+    const { data: tokenData, error: tokenError } = await supabase
       .from("wedding_invitations")
       .select("wedding_invitation_id")
       .eq("guest_token", suppliedId)
       .maybeSingle();
 
     if (tokenError) {
-      console.error("Error finding invitation by token:", tokenError);
+      console.error("Invitation token lookup failed:", tokenError);
       throw new Error(tokenError.message);
     }
 
@@ -98,21 +98,17 @@ export default function GuestMessages({
       return Number(tokenData.wedding_invitation_id);
     }
 
-    // If the supplied value is numeric, try it as the primary key.
     const numericId = Number(suppliedId);
 
     if (Number.isInteger(numericId) && numericId > 0) {
-      const {
-        data: idData,
-        error: idError,
-      } = await supabase
+      const { data: idData, error: idError } = await supabase
         .from("wedding_invitations")
         .select("wedding_invitation_id")
         .eq("wedding_invitation_id", numericId)
         .maybeSingle();
 
       if (idError) {
-        console.error("Error finding invitation by ID:", idError);
+        console.error("Invitation ID lookup failed:", idError);
         throw new Error(idError.message);
       }
 
@@ -121,13 +117,11 @@ export default function GuestMessages({
       }
     }
 
-    throw new Error(
-      "Invitation not found. Please check the invitation ID or guest token."
-    );
+    throw new Error("Could not find the invitation in Supabase.");
   }, [invitation, invitationId]);
 
   /*
-   * Load guest messages from the wishes table.
+   * Load wishes belonging to this event.
    */
   const loadWishes = useCallback(async () => {
     setLoadingWishes(true);
@@ -136,7 +130,7 @@ export default function GuestMessages({
       const eventId = Number(invitation?.event_id);
 
       if (!Number.isInteger(eventId) || eventId <= 0) {
-        throw new Error("The event ID is missing from this invitation.");
+        throw new Error("The invitation does not contain a valid event ID.");
       }
 
       const { data, error } = await supabase
@@ -146,13 +140,20 @@ export default function GuestMessages({
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("Error loading wishes:", error);
+        console.error("Loading wishes failed:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+
         throw new Error(error.message);
       }
 
       setWishes((data ?? []) as GuestWish[]);
     } catch (error) {
-      console.error("Could not load guest messages:", error);
+      console.error("Could not load wishes:", error);
+
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -168,7 +169,7 @@ export default function GuestMessages({
   }, [loadWishes]);
 
   /*
-   * Save RSVP to the actual invitation record.
+   * Save RSVP.
    */
   const handleRSVP = async (status: Exclude<RSVPStatus, null>) => {
     if (savingRSVP) return;
@@ -180,7 +181,7 @@ export default function GuestMessages({
     try {
       const activeInvitationId = await resolveInvitationId();
 
-      const newAttendingCount =
+      const newCount =
         status === "accepted"
           ? Math.max(1, Number(attendingCount) || Number(guestCount) || 1)
           : 0;
@@ -189,28 +190,27 @@ export default function GuestMessages({
         .from("wedding_invitations")
         .update({
           rsvp_status: status,
-          attending_count: newAttendingCount,
+          attending_count: newCount,
           responded_at: new Date().toISOString(),
         })
         .eq("wedding_invitation_id", activeInvitationId)
-        .select(
-          "wedding_invitation_id, rsvp_status, attending_count"
-        )
+        .select("wedding_invitation_id, rsvp_status, attending_count")
         .maybeSingle();
 
       if (error) {
-        console.error("Error saving RSVP:", error);
+        console.error("Saving RSVP failed:", error);
         throw new Error(error.message);
       }
 
       if (!data) {
         throw new Error(
-          "No invitation was updated. Check the invitation ID and Supabase UPDATE permissions."
+          "No invitation was updated. Check the Supabase UPDATE policy."
         );
       }
 
       setResponse(data.rsvp_status as RSVPStatus);
       setAttendingCount(Number(data.attending_count ?? 0));
+
       setFeedback(
         status === "accepted"
           ? "Thank you! Your attendance has been confirmed."
@@ -218,10 +218,11 @@ export default function GuestMessages({
       );
     } catch (error) {
       console.error("RSVP save failed:", error);
+
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "Unable to save your RSVP. Please try again."
+          : "Unable to save your RSVP."
       );
     } finally {
       setSavingRSVP(false);
@@ -229,15 +230,13 @@ export default function GuestMessages({
   };
 
   /*
-   * Update the number of attendees for an accepted RSVP.
+   * Update attendee count.
    */
   const updateCountInSupabase = async (newCount: number) => {
     if (updatingCount || response !== "accepted") return;
 
-    const safeCount = Math.max(
-      1,
-      Math.min(Number(guestCount) || 1, Math.floor(newCount))
-    );
+    const maximum = Math.max(1, Number(guestCount) || 1);
+    const safeCount = Math.max(1, Math.min(maximum, Math.floor(newCount)));
 
     setUpdatingCount(true);
     setFeedback("");
@@ -258,20 +257,19 @@ export default function GuestMessages({
         .maybeSingle();
 
       if (error) {
-        console.error("Error updating attending count:", error);
+        console.error("Updating guest count failed:", error);
         throw new Error(error.message);
       }
 
       if (!data) {
-        throw new Error(
-          "The guest count was not updated. Check the RSVP status and database permissions."
-        );
+        throw new Error("The attendee count was not updated.");
       }
 
       setAttendingCount(Number(data.attending_count));
       setFeedback("Your guest count has been updated.");
     } catch (error) {
       console.error("Guest count update failed:", error);
+
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -283,7 +281,7 @@ export default function GuestMessages({
   };
 
   /*
-   * Insert a new guest message into the wishes table.
+   * Save a guest wish to Supabase.
    */
   const handleMessageSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -306,34 +304,60 @@ export default function GuestMessages({
 
       if (!Number.isInteger(eventId) || eventId <= 0) {
         throw new Error(
-          "The event ID is missing. Please check the invitation page."
+          "Invalid event ID. Check the invitation record passed to GuestMessages."
         );
       }
 
+      const wishToSave = {
+        event_id: eventId,
+        guest_name: guestName.trim() || "Guest",
+        message: trimmedMessage,
+      };
+
+      console.log("Saving wish to Supabase:", {
+        event_id: wishToSave.event_id,
+        guest_name: wishToSave.guest_name,
+      });
+
       const { data, error } = await supabase
         .from("wishes")
-        .insert({
-          event_id: eventId,
-          guest_name: guestName.trim() || "Guest",
-          message: trimmedMessage,
-        })
+        .insert(wishToSave)
         .select("wish_id, event_id, guest_name, message, created_at")
         .single();
 
       if (error) {
-        console.error("Error saving guest message:", error);
-        throw new Error(error.message);
+        console.error("Supabase wish insert failed:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+
+        throw new Error(
+          `Could not save your wish: ${error.message}${
+            error.details ? ` — ${error.details}` : ""
+          }`
+        );
       }
 
       if (!data) {
-        throw new Error("Supabase did not return the saved message.");
+        throw new Error("Supabase did not return the saved wish.");
       }
 
-      setWishes((current) => [data as GuestWish, ...current]);
+      // Display the row returned by Supabase, not an unsaved local object.
+      setWishes((current) => [
+        data as GuestWish,
+        ...current.filter((wish) => wish.wish_id !== data.wish_id),
+      ]);
+
       setMessage("");
       setFeedback("Your message has been saved. Thank you!");
+
+      // Re-fetch from the database to confirm the saved list.
+      await loadWishes();
     } catch (error) {
-      console.error("Guest message save failed:", error);
+      console.error("Guest wish save failed:", error);
+
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -350,7 +374,7 @@ export default function GuestMessages({
       className="relative overflow-hidden bg-[#fbf7f1] px-5 py-20 text-[#49382d] md:px-8"
     >
       <div className="mx-auto max-w-4xl">
-        {/* Section heading */}
+        {/* Heading */}
         <div className="mb-12 text-center">
           <Heart
             className="mx-auto mb-4 text-[#b99572]"
@@ -363,7 +387,7 @@ export default function GuestMessages({
           </p>
 
           <h2 className="mt-3 font-serif text-3xl md:text-5xl">
-            RSVP & Guest Wishes
+            RSVP &amp; Guest Wishes
           </h2>
 
           <p className="mx-auto mt-4 max-w-lg text-sm leading-7 text-[#92795c]">
@@ -372,7 +396,7 @@ export default function GuestMessages({
           </p>
         </div>
 
-        {/* RSVP card */}
+        {/* RSVP */}
         <div className="mb-8 rounded-3xl border border-[#ddc9b1] bg-white/70 p-6 shadow-sm md:p-8">
           <div className="mb-6 flex items-center gap-3">
             <Users className="text-[#b99572]" size={24} />
@@ -401,7 +425,7 @@ export default function GuestMessages({
               ) : (
                 <CheckCircle2 size={18} />
               )}
-              Yes, I'll be there
+              Yes, I&apos;ll be there
             </button>
 
             <button
@@ -419,7 +443,7 @@ export default function GuestMessages({
               ) : (
                 <XCircle size={18} />
               )}
-              Sorry, can't make it
+              Sorry, can&apos;t make it
             </button>
           </div>
 
@@ -437,15 +461,13 @@ export default function GuestMessages({
                   id="attendingCount"
                   value={attendingCount}
                   disabled={updatingCount || savingRSVP}
-                  onChange={(event) => {
-                    void updateCountInSupabase(Number(event.target.value));
-                  }}
+                  onChange={(event) =>
+                    void updateCountInSupabase(Number(event.target.value))
+                  }
                   className="w-full rounded-xl border border-[#ddc9b1] bg-white px-4 py-3 outline-none focus:border-[#b99572] disabled:opacity-60"
                 >
                   {Array.from(
-                    {
-                      length: Math.max(1, Number(guestCount) || 1),
-                    },
+                    { length: Math.max(1, Number(guestCount) || 1) },
                     (_, index) => index + 1
                   ).map((count) => (
                     <option key={count} value={count}>
@@ -465,7 +487,7 @@ export default function GuestMessages({
           )}
         </div>
 
-        {/* Guest message form */}
+        {/* Leave a wish */}
         <div className="mb-10 rounded-3xl border border-[#ddc9b1] bg-white/70 p-6 shadow-sm md:p-8">
           <div className="mb-5 flex items-center gap-3">
             <MessageCircle className="text-[#b99572]" size={24} />
@@ -511,7 +533,7 @@ export default function GuestMessages({
           </form>
         </div>
 
-        {/* Feedback */}
+        {/* Feedback and errors */}
         {feedback && (
           <div
             role="status"
@@ -530,13 +552,16 @@ export default function GuestMessages({
           </div>
         )}
 
-        {/* Wishes list */}
+        {/* Messages from loved ones */}
         <div>
           <div className="mb-6 flex items-center justify-between gap-4">
-            <h3 className="font-serif text-2xl">Messages from loved ones</h3>
+            <h3 className="font-serif text-2xl">
+              Messages from loved ones
+            </h3>
 
             <span className="rounded-full border border-[#ddc9b1] px-3 py-1 text-xs text-[#92795c]">
-              {wishes.length} {wishes.length === 1 ? "message" : "messages"}
+              {wishes.length}{" "}
+              {wishes.length === 1 ? "message" : "messages"}
             </span>
           </div>
 
@@ -553,7 +578,9 @@ export default function GuestMessages({
                 strokeWidth={1.3}
               />
 
-              <p className="font-serif text-xl">Be the first to leave a wish</p>
+              <p className="font-serif text-xl">
+                Be the first to leave a wish
+              </p>
 
               <p className="mt-2 text-sm text-[#92795c]">
                 Your kind words will make the day even more special.
