@@ -1,17 +1,11 @@
-
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   House,
   Mail,
   Heart,
-  Images,
   Clock,
-  Church,
-  PartyPopper,
-  MapPin,
-  CalendarDays,
   MessageCircleHeart,
   Gift,
 } from "lucide-react";
@@ -20,18 +14,35 @@ const navItems = [
   { label: "Home", href: "#hero", Icon: House },
   { label: "Invitation", href: "#invitation-message", Icon: Mail },
   { label: "Our Story", href: "#couple-story", Icon: Heart },
-  //{ label: "Gallery", href: "#gallery", Icon: Images },
   { label: "Countdown", href: "#countdown", Icon: Clock },
-  //{ label: "Ceremony", href: "#ceremony", Icon: Church },
- // { label: "Reception", href: "#reception", Icon: PartyPopper },
-  //{ label: "Location", href: "#location", Icon: MapPin },
-  //{ label: "Events", href: "#events", Icon: CalendarDays },
   { label: "Guest Wishes", href: "#wishes", Icon: MessageCircleHeart },
   { label: "Thank You", href: "#thank-you", Icon: Gift },
 ];
 
 export default function NavigationBar() {
-  const [active, setActive] = useState("#home");
+  const [active, setActive] = useState("#hero");
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollPosition = window.scrollY + window.innerHeight / 3;
+
+      for (let i = navItems.length - 1; i >= 0; i--) {
+        const item = navItems[i];
+        const el = document.querySelector(item.href);
+        if (el) {
+          const top = (el as HTMLElement).offsetTop;
+          if (scrollPosition >= top) {
+            setActive(item.href);
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const navigateTo = (href: string) => {
     setActive(href);

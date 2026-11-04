@@ -1,7 +1,6 @@
 
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Great_Vibes } from "next/font/google";
-import NavigationBar from "@/components/wedding2/NavigationBar";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -21,8 +20,8 @@ const greatVibes = Great_Vibes({
 });
 
 export const metadata: Metadata = {
-  title: "Olivia & Thomas | Wedding Invitation",
-  description: "Join us to celebrate our wedding.",
+  title: "Event & Wedding Invitations",
+  description: "Digital celebration and wedding invitations.",
 };
 
 export default function RootLayout({
@@ -36,7 +35,6 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${greatVibes.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
-        <NavigationBar />
         {children}
       </body>
     </html>

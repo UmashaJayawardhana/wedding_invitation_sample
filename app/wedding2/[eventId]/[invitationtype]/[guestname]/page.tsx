@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 import Opening from "@/components/wedding2/Opening";
+import NavigationBar from "@/components/wedding2/NavigationBar";
 import Hero from "@/components/wedding2/hero";
 import InvitationMessage from "@/components/wedding2/InvitationMessage";
 import CoupleStory from "@/components/wedding2/CoupleStory";
@@ -155,24 +156,39 @@ export default function InvitationPage({ params }: PageProps) {
     };
   }, [eventId, decodedGuestName]);
 
+  const activeInvitation: WeddingInvitationRecord = invitation || {
+    wedding_invitation_id: Number(eventId) || 0,
+    event_id: Number(eventId) || 0,
+    guest_name: guestName,
+    invitation_type: invitationType,
+    number_of_guests: guestCount,
+    rsvp_status: "pending",
+    attending_count: guestCount,
+    responded_at: null,
+    wish_message: null,
+    wish_created_at: null,
+  };
+
   return (
     <main>
       {!isOpen ? (
         <Opening onOpen={() => setIsOpen(true)} />
       ) : (
         <>
-          <section id="home">
+          <NavigationBar />
+
+          <section id="hero">
             <Hero />
           </section>
 
-          <section id="invitation">
+          <section id="invitation-message">
             <InvitationMessage
               guestName={guestName}
               invitationType={invitationType}
             />
           </section>
 
-          <section id="story">
+          <section id="couple-story">
             <CoupleStory />
           </section>
 
@@ -181,16 +197,14 @@ export default function InvitationPage({ params }: PageProps) {
           </section>
 
           <section id="wishes">
-{invitation && (
-  <GuestMessages
-    guestName={guestName}
-    invitationId={
-      invitation.guest_token ?? invitation.wedding_invitation_id
-    }
-    guestCount={invitation.number_of_guests ?? 1}
-    invitation={invitation}
-  />
-)}
+            <GuestMessages
+              guestName={guestName}
+              invitationId={
+                activeInvitation.guest_token ?? activeInvitation.wedding_invitation_id
+              }
+              guestCount={activeInvitation.number_of_guests ?? guestCount}
+              invitation={activeInvitation}
+            />
           </section>
 
           <section id="thank-you">
