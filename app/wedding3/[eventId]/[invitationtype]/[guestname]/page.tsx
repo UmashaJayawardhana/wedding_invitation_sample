@@ -413,6 +413,8 @@ export default function WeddingPage({ params }: PageProps) {
                   guestCount={guestCount}
                   onGuestCountChange={setGuestCount}
                   invitation={invitation}
+                  invitationType={invitationType}
+                  onInvitationUpdate={setInvitation}
                 />
               </div>
             </section>
@@ -426,6 +428,9 @@ export default function WeddingPage({ params }: PageProps) {
                   eventId={eventIdNum}
                   guestName={guestName}
                   onGuestNameChange={setGuestName}
+                  invitation={invitation}
+                  invitationType={invitationType}
+                  onInvitationUpdate={setInvitation}
                 />
               </div>
             </section>
@@ -769,8 +774,15 @@ function Countdown({ target }: { target: number }) {
   );
 }
 
+function formatInvitationType(t?: string): "Single" | "Couple" | "Family" {
+  const lower = (t || "").toLowerCase();
+  if (lower.includes("family") || lower === "3") return "Family";
+  if (lower.includes("couple") || lower === "2") return "Couple";
+  return "Single";
+}
+
 /* ============================================================
-   RSVP – saves RSVP to Supabase (wedding_invitations) & optional WhatsApp
+   RSVP – saves RSVP to public.wedding_invitations & optional WhatsApp
 ============================================================ */
 function Rsvp({
   eventId,
@@ -779,6 +791,8 @@ function Rsvp({
   guestCount,
   onGuestCountChange,
   invitation,
+  invitationType,
+  onInvitationUpdate,
 }: {
   eventId: number;
   guestName: string;
@@ -786,14 +800,29 @@ function Rsvp({
   guestCount: number;
   onGuestCountChange: (c: number) => void;
   invitation: WeddingInvitationRecord | null;
+  invitationType: string;
+  onInvitationUpdate?: (inv: WeddingInvitationRecord) => void;
 }) {
   const [choice, setChoice] = useState<"yes" | "no" | null>(() => {
     if (invitation?.rsvp_status === "accepted") return "yes";
     if (invitation?.rsvp_status === "declined") return "no";
     return null;
   });
+
+  // Calculate max allowed guests respecting wedding_attending_count_check (<= number_of_guests)
+  const maxAllowed = Math.max(
+    1,
+    invitation?.number_of_guests ??
+      (formatInvitationType(invitationType) === "Family"
+        ? 4
+        : formatInvitationType(invitationType) === "Couple"
+        ? 2
+        : 1)
+  );
+
   const [count, setCount] = useState<number>(() => {
-    return invitation?.attending_count ?? guestCount;
+    const initial = invitation?.attending_count ?? guestCount;
+    return Math.min(Math.max(1, initial), maxAllowed);
   });
   const [sent, setSent] = useState(Boolean(invitation?.responded_at));
   const [submitting, setSubmitting] = useState(false);
@@ -804,10 +833,14 @@ function Rsvp({
       if (invitation.rsvp_status === "accepted") setChoice("yes");
       else if (invitation.rsvp_status === "declined") setChoice("no");
 
-      if (invitation.attending_count) setCount(invitation.attending_count);
-      else if (invitation.number_of_guests) setCount(invitation.number_of_guests);
+      const lim = Math.max(1, invitation.number_of_guests ?? maxAllowed);
+      if (typeof invitation.attending_count === "number" && invitation.attending_count > 0) {
+        setCount(Math.min(invitation.attending_count, lim));
+      } else if (invitation.number_of_guests) {
+        setCount(invitation.number_of_guests);
+      }
     }
-  }, [invitation]);
+  }, [invitation, maxAllowed]);
 
   const send = async () => {
     const trimmed = guestName.trim();
@@ -817,27 +850,34 @@ function Rsvp({
 
     const sb = getSb();
     const status = choice === "yes" ? "accepted" : "declined";
-    const attendingCount = choice === "yes" ? count : 0;
+    // Bound attending_count between 0 and number_of_guests to fulfill constraint
+    const maxLimit = Math.max(1, invitation?.number_of_guests ?? maxAllowed);
+    const attendingCount = choice === "yes" ? Math.min(count, maxLimit) : 0;
     const nowISO = new Date().toISOString();
 
     if (sb) {
       try {
-        // 1. If we have a known wedding_invitation_id, update it directly
+        // 1. If we have a known wedding_invitation_id, update directly
         if (invitation?.wedding_invitation_id) {
-          const { error: updateErr } = await sb
+          const { data, error: updateErr } = await sb
             .from("wedding_invitations")
             .update({
               rsvp_status: status,
               attending_count: attendingCount,
               responded_at: nowISO,
             })
-            .eq("wedding_invitation_id", invitation.wedding_invitation_id);
+            .eq("wedding_invitation_id", invitation.wedding_invitation_id)
+            .select("*")
+            .single();
 
           if (updateErr) {
-            console.warn("Could not update invitation directly:", updateErr.message);
+            console.error("RSVP update error in wedding_invitations:", updateErr.message);
+            setError(updateErr.message);
+          } else if (data && onInvitationUpdate) {
+            onInvitationUpdate(data as WeddingInvitationRecord);
           }
         } else {
-          // 2. Otherwise search by event_id + guest_name
+          // 2. Otherwise match by event_id + guest_name in wedding_invitations
           const primary = trimmed.split(/[&+]|\band\b|\bfamily\b/i)[0].trim();
           const { data: matched } = await sb
             .from("wedding_invitations")
@@ -847,26 +887,55 @@ function Rsvp({
             .limit(1);
 
           if (matched && matched.length > 0) {
-            await sb
+            const { data, error: updateErr } = await sb
               .from("wedding_invitations")
               .update({
                 rsvp_status: status,
                 attending_count: attendingCount,
                 responded_at: nowISO,
               })
-              .eq("wedding_invitation_id", matched[0].wedding_invitation_id);
+              .eq("wedding_invitation_id", matched[0].wedding_invitation_id)
+              .select("*")
+              .single();
+
+            if (updateErr) {
+              console.error("RSVP update error in wedding_invitations:", updateErr.message);
+              setError(updateErr.message);
+            } else if (data && onInvitationUpdate) {
+              onInvitationUpdate(data as WeddingInvitationRecord);
+            }
           } else {
-            // If not found, attempt insert into wedding_invitations
-            await sb
+            // Attempt insert into wedding_invitations matching all constraints
+            const typeFormatted = formatInvitationType(invitationType);
+            const token =
+              typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `token_${Date.now()}`;
+            const numGuests = Math.max(
+              count,
+              typeFormatted === "Family" ? 4 : typeFormatted === "Couple" ? 2 : 1
+            );
+
+            const { data, error: insertErr } = await sb
               .from("wedding_invitations")
               .insert({
                 event_id: eventId,
                 guest_name: trimmed,
+                guest_token: token,
+                invitation_type: typeFormatted,
+                number_of_guests: numGuests,
                 rsvp_status: status,
                 attending_count: attendingCount,
-                number_of_guests: choice === "yes" ? count : 1,
                 responded_at: nowISO,
-              });
+              })
+              .select("*")
+              .single();
+
+            if (insertErr) {
+              console.warn("Could not insert directly into wedding_invitations:", insertErr.message);
+            } else if (data && onInvitationUpdate) {
+              onInvitationUpdate(data as WeddingInvitationRecord);
+            }
           }
         }
       } catch (err) {
@@ -895,7 +964,11 @@ function Rsvp({
         </div>
         <h3 className="mb-2 text-2xl text-[#2e241c]">{choice === "yes" ? "We can’t wait to see you!" : "We’ll miss you"}</h3>
         <p className="text-sm text-[#6a5749]">Your RSVP has been recorded. Thank you!</p>
-        <button type="button" onClick={() => setSent(false)} className="mt-5 text-xs tracking-[0.2em] text-[#8c672d] underline underline-offset-4">
+        <button
+          type="button"
+          onClick={() => setSent(false)}
+          className="mt-5 text-xs tracking-[0.2em] text-[#8c672d] underline underline-offset-4"
+        >
           CHANGE MY REPLY
         </button>
       </motion.div>
@@ -907,7 +980,7 @@ function Rsvp({
       <input
         value={guestName}
         onChange={(e) => onGuestNameChange(e.target.value)}
-        maxLength={60}
+        maxLength={150}
         placeholder="Your name"
         className="w-full rounded-2xl border border-[#dfd3c1] bg-[#fdfbf7] px-4 py-3 text-sm text-[#2e241c] outline-none placeholder:text-[#9e8f80] focus:border-[#b88a44]"
       />
@@ -923,12 +996,13 @@ function Rsvp({
             type="button"
             whileTap={{ scale: 0.95 }}
             onClick={() => setChoice(v)}
-            className={`rounded-2xl border px-3 py-4 text-sm transition ${choice === v
+            className={`rounded-2xl border px-3 py-4 text-sm transition ${
+              choice === v
                 ? v === "yes"
                   ? "border-[#b88a44] bg-gradient-to-br from-[#c89e65] to-[#b38243] text-white shadow-md"
                   : "border-[#4a3d34] bg-[#4a3d34] text-white shadow-md"
                 : "border-[#dfd3c1] bg-[#fbf8f2] text-[#5a4a3e] hover:bg-white"
-              }`}
+            }`}
           >
             {label}
           </motion.button>
@@ -938,7 +1012,9 @@ function Rsvp({
       <AnimatePresence>
         {choice === "yes" && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <p className="mb-3 text-center text-xs uppercase tracking-[0.25em] text-[#a67c38]">How many will attend?</p>
+            <p className="mb-3 text-center text-xs uppercase tracking-[0.25em] text-[#a67c38]">
+              How many will attend? (Max: {maxAllowed})
+            </p>
             <div className="flex items-center justify-center gap-6">
               <button
                 type="button"
@@ -958,13 +1034,13 @@ function Rsvp({
               <button
                 type="button"
                 aria-label="More"
+                disabled={count >= maxAllowed}
                 onClick={() => {
-                  const maxAllowed = Math.max(20, (invitation?.number_of_guests ?? 4));
                   const newC = Math.min(maxAllowed, count + 1);
                   setCount(newC);
                   onGuestCountChange(newC);
                 }}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-[#dfd3c1] text-[#2e241c] hover:bg-[#f5eee3]"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-[#dfd3c1] text-[#2e241c] hover:bg-[#f5eee3] disabled:opacity-30"
               >
                 <Plus size={16} />
               </button>
@@ -988,7 +1064,7 @@ function Rsvp({
 }
 
 /* ============================================================
-   Guest wishes – saved in the Supabase `wishes` table (event_id)
+   Guest wishes – saved in and queried from public.wedding_invitations
 ============================================================ */
 function ago(iso: string) {
   const s = Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -998,34 +1074,61 @@ function ago(iso: string) {
   return `${Math.floor(s / 86400)} d ago`;
 }
 
-const WISH_COLUMNS = "wish_id, guest_name, message, created_at";
-
 function Wishes({
   eventId,
   guestName,
   onGuestNameChange,
+  invitation,
+  invitationType,
+  onInvitationUpdate,
 }: {
   eventId: number;
   guestName: string;
   onGuestNameChange: (n: string) => void;
+  invitation: WeddingInvitationRecord | null;
+  invitationType: string;
+  onInvitationUpdate?: (inv: WeddingInvitationRecord) => void;
 }) {
   const [wishes, setWishes] = useState<Wish[]>([]);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(invitation?.wish_message ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [thanks, setThanks] = useState(false);
   const [cooldown, setCooldown] = useState(false);
 
+  useEffect(() => {
+    if (invitation?.wish_message && !message) {
+      setMessage(invitation.wish_message);
+    }
+  }, [invitation?.wish_message]);
+
   const load = async () => {
     const sb = getSb();
     if (!sb) return;
-    const { data } = await sb
-      .from("wishes")
-      .select(WISH_COLUMNS)
+
+    // Load wishes directly from public.wedding_invitations
+    const { data, error: fetchErr } = await sb
+      .from("wedding_invitations")
+      .select("wedding_invitation_id, guest_name, wish_message, wish_created_at")
       .eq("event_id", eventId)
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (data) setWishes(data as Wish[]);
+      .not("wish_message", "is", null)
+      .order("wish_created_at", { ascending: false });
+
+    if (fetchErr) {
+      console.error("Error loading wishes from wedding_invitations:", fetchErr);
+      return;
+    }
+
+    const formatted: Wish[] = (data || [])
+      .filter((r) => typeof r.wish_message === "string" && r.wish_message.trim().length > 0)
+      .map((r) => ({
+        wish_id: r.wedding_invitation_id,
+        guest_name: r.guest_name,
+        message: r.wish_message as string,
+        created_at: r.wish_created_at || new Date().toISOString(),
+      }));
+
+    setWishes(formatted);
   };
 
   useEffect(() => {
@@ -1041,38 +1144,142 @@ function Wishes({
     const n = guestName.trim();
     const m = message.trim();
     if (!sb) return setError("Wishes are not available right now.");
-    if (!n || !m || busy || cooldown) return;
+    if (!n) return setError("Please enter your name.");
+    if (!m) return setError("Please enter your wish message.");
+    if (m.length > 500) return setError("Wish message must be 500 characters or less.");
+    if (busy || cooldown) return;
+
     setBusy(true);
     setError("");
-    const { data, error } = await sb
-      .from("wishes")
-      .insert({ event_id: eventId, guest_name: n, message: m })
-      .select(WISH_COLUMNS)
-      .single();
-    setBusy(false);
-    if (error) return setError("Sorry, we couldn’t save your wish. Please try again.");
-    setWishes((w) => [data as Wish, ...w]);
-    setMessage("");
-    setThanks(true);
 
-    // Also sync wish with wedding_invitations if record exists for this guest
+    const nowISO = new Date().toISOString();
+
     try {
-      const primary = n.split(/[&+]|\band\b|\bfamily\b/i)[0].trim();
-      await sb
-        .from("wedding_invitations")
-        .update({
-          wish_message: m,
-          wish_created_at: new Date().toISOString(),
-        })
-        .eq("event_id", eventId)
-        .ilike("guest_name", `%${primary || n}%`);
-    } catch {
-      // Non-blocking
-    }
+      // 1. If invitation already has wedding_invitation_id, update it in wedding_invitations
+      if (invitation?.wedding_invitation_id) {
+        const { data, error: saveErr } = await sb
+          .from("wedding_invitations")
+          .update({
+            wish_message: m,
+            wish_created_at: nowISO,
+          })
+          .eq("wedding_invitation_id", invitation.wedding_invitation_id)
+          .select("*")
+          .single();
 
-    setCooldown(true); // small pause so the wall isn't spammed
-    setTimeout(() => setThanks(false), 3500);
-    setTimeout(() => setCooldown(false), 15000);
+        if (saveErr) {
+          console.error("Supabase wish save error in wedding_invitations:", saveErr);
+          setError("Sorry, we couldn’t save your wish. Please try again.");
+          setBusy(false);
+          return;
+        }
+
+        if (data && onInvitationUpdate) {
+          onInvitationUpdate(data as WeddingInvitationRecord);
+        }
+
+        const updatedWish: Wish = {
+          wish_id: invitation.wedding_invitation_id,
+          guest_name: n,
+          message: m,
+          created_at: nowISO,
+        };
+        setWishes((prev) => [updatedWish, ...prev.filter((w) => w.wish_id !== updatedWish.wish_id)]);
+      } else {
+        // 2. Otherwise find by event_id + guest_name in wedding_invitations
+        const primary = n.split(/[&+]|\band\b|\bfamily\b/i)[0].trim();
+        const { data: matched } = await sb
+          .from("wedding_invitations")
+          .select("wedding_invitation_id")
+          .eq("event_id", eventId)
+          .ilike("guest_name", `%${primary || n}%`)
+          .limit(1);
+
+        if (matched && matched.length > 0) {
+          const { data, error: saveErr } = await sb
+            .from("wedding_invitations")
+            .update({
+              wish_message: m,
+              wish_created_at: nowISO,
+            })
+            .eq("wedding_invitation_id", matched[0].wedding_invitation_id)
+            .select("*")
+            .single();
+
+          if (saveErr) {
+            console.error("Supabase wish save error in wedding_invitations:", saveErr);
+            setError("Sorry, we couldn’t save your wish. Please try again.");
+            setBusy(false);
+            return;
+          }
+
+          if (data && onInvitationUpdate) {
+            onInvitationUpdate(data as WeddingInvitationRecord);
+          }
+
+          const updatedWish: Wish = {
+            wish_id: matched[0].wedding_invitation_id,
+            guest_name: n,
+            message: m,
+            created_at: nowISO,
+          };
+          setWishes((prev) => [updatedWish, ...prev.filter((w) => w.wish_id !== updatedWish.wish_id)]);
+        } else {
+          // If no row exists, insert into wedding_invitations
+          const typeFormatted = formatInvitationType(invitationType);
+          const token =
+            typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `token_${Date.now()}`;
+          const numGuests = typeFormatted === "Family" ? 4 : typeFormatted === "Couple" ? 2 : 1;
+
+          const { data, error: insertErr } = await sb
+            .from("wedding_invitations")
+            .insert({
+              event_id: eventId,
+              guest_name: n,
+              guest_token: token,
+              invitation_type: typeFormatted,
+              number_of_guests: numGuests,
+              rsvp_status: "pending",
+              wish_message: m,
+              wish_created_at: nowISO,
+            })
+            .select("*")
+            .single();
+
+          if (insertErr) {
+            console.error("Supabase wish insert error in wedding_invitations:", insertErr);
+            setError("Sorry, we couldn’t save your wish. Please try again.");
+            setBusy(false);
+            return;
+          }
+
+          if (data && onInvitationUpdate) {
+            onInvitationUpdate(data as WeddingInvitationRecord);
+          }
+
+          const newWish: Wish = {
+            wish_id: data?.wedding_invitation_id ?? Date.now(),
+            guest_name: n,
+            message: m,
+            created_at: nowISO,
+          };
+          setWishes((prev) => [newWish, ...prev.filter((w) => w.wish_id !== newWish.wish_id)]);
+        }
+      }
+
+      setBusy(false);
+      setMessage("");
+      setThanks(true);
+      setCooldown(true);
+      setTimeout(() => setThanks(false), 3500);
+      setTimeout(() => setCooldown(false), 15000);
+    } catch (err) {
+      console.error("Failed to save wish:", err);
+      setError("Unable to save wish. Please try again.");
+      setBusy(false);
+    }
   };
 
   return (
@@ -1081,7 +1288,7 @@ function Wishes({
         <input
           value={guestName}
           onChange={(e) => onGuestNameChange(e.target.value)}
-          maxLength={60}
+          maxLength={150}
           placeholder="Your name"
           className="w-full rounded-2xl border border-[#dfd3c1] bg-[#fdfbf7] px-4 py-3 text-sm text-[#2e241c] outline-none placeholder:text-[#9e8f80] focus:border-[#b88a44]"
         />
