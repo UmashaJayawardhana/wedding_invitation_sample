@@ -301,25 +301,20 @@ export default function WeddingPage({ params }: PageProps) {
         animate={revealed ? { opacity: 1, filter: "blur(0px)", scale: 1 } : {}}
         transition={{ duration: 2.5, ease: "easeOut" }}
       >
-        {/* ---------------- FIRST PAGE: SAVE THE DATE INVITATION CARD ---------------- */}
-        <section
-          className="relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden px-4 py-8 sm:py-12"
-          style={{ background: CREAM_HERO }}
-        >
+        {/* ---------------- FIRST PAGE: SAVE THE DATE INVITATION CARD (FULL IMAGE, NO BACKGROUND, MOBILE SUITABLE) ---------------- */}
+        <section className="relative flex min-h-[100dvh] w-full items-center justify-center overflow-hidden">
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: 16 }}
-            animate={revealed ? { opacity: 1, scale: 1, y: 0 } : {}}
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={revealed ? { opacity: 1, scale: 1 } : {}}
             transition={{ duration: 1.2, ease: "easeOut" }}
-            className="relative z-10 flex flex-col items-center justify-center"
+            className="flex min-h-[100dvh] w-full items-center justify-center p-2 sm:p-6"
           >
-            <div className="relative aspect-[16/9] w-full max-w-[min(94vw,calc(90dvh*16/9))] max-h-[90dvh] overflow-hidden rounded-2xl sm:rounded-3xl border border-[#e5d8c5]/80 bg-white shadow-[0_20px_50px_rgba(70,50,30,0.16)]">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src="/images/wedding4/open1.jpeg"
-                alt="Save The Date - Viraj & Sachini"
-                className="h-full w-full object-contain"
-              />
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/images/wedding4/open1.jpeg"
+              alt="Save The Date - VIRAJ and SACHINI"
+              className="h-auto w-full max-h-[96dvh] max-w-[min(100vw,calc(96dvh*1114/1536))] object-contain"
+            />
           </motion.div>
         </section>
 
