@@ -1,0 +1,1267 @@
+"use client";
+
+import { use, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Heart,
+  MapPin,
+  Minus,
+  Plus,
+  Send,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
+import { Cormorant_Garamond, Great_Vibes, Playfair_Display, Cinzel } from "next/font/google";
+import Opening from "@/components/wedding4/opening";
+
+const script = Great_Vibes({ subsets: ["latin"], weight: "400" });
+const serif = Playfair_Display({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
+const cormorant = Cormorant_Garamond({ subsets: ["latin"], weight: ["300", "400", "500", "600", "700"] });
+const cinzel = Cinzel({ subsets: ["latin"], weight: ["400", "500", "600", "700"] });
+
+/* ============================================================
+   WEDDING 4 DETAILS
+============================================================ */
+const COUPLE = { one: "VIRAJ", two: "SACHINI" };
+
+const EVENT = {
+  id: 7, // event_id in your Supabase tables – wishes & RSVPs are saved against it
+  dateISO: "2026-12-12T09:00:00+05:30", // Sri Lanka time (December 12, 2026)
+  timeDisplay: "9:00 AM onwards (Poruwa 9:24 AM)",
+  venue: "Hotel Green Court, Homagama",
+  mapUrl: "https://maps.google.com/?q=Hotel+Green+Court+Homagama",
+  message:
+    "Join us to celebrate our wedding day with love, laughter and blessings as we begin our forever.",
+};
+
+// Optional WhatsApp number for notification backup (e.g. "94771234567")
+const WHATSAPP_NUMBER = "";
+
+// Background music for the invitation
+const MUSIC_SRC = "/audio/wedding4/boybandpop_beautiful-in-white-shane-filan-westlife.mp3";
+
+// Couple photos for Our Moments – in /public/images/wedding4
+const CHAPTERS = [
+  {
+    title: "Our Moments",
+    caption: "Two hearts, one beautiful journey.",
+    photos: [
+      "/images/wedding4/couple1.jpeg",
+      "/images/wedding4/couple2.jpeg",
+      "/images/wedding4/couple3.jpeg",
+      "/images/wedding4/couple4.jpeg",
+      "/images/wedding4/couple5.jpeg",
+      "/images/wedding4/couple6.jpeg",
+      "/images/wedding4/couple7.jpeg",
+      "/images/wedding4/couple8.jpeg",
+    ],
+  },
+];
+
+/* ============================================================
+   Supabase Database Types
+============================================================ */
+export interface WeddingInvitationRecord {
+  wedding_invitation_id: number;
+  event_id: number;
+  guest_name: string;
+  guest_token?: string;
+  invitation_type: string;
+  number_of_guests: number;
+  rsvp_status: "pending" | "accepted" | "declined" | string;
+  attending_count: number | null;
+  responded_at: string | null;
+  wish_message: string | null;
+  wish_created_at: string | null;
+  created_at?: string;
+}
+
+interface Wish {
+  wish_id: number;
+  guest_name: string;
+  message: string;
+  created_at: string;
+}
+
+let _sb: SupabaseClient | null = null;
+function getSb(): SupabaseClient | null {
+  if (_sb) return _sb;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  _sb = createClient(url, key);
+  return _sb;
+}
+
+// Calm, charming cream backgrounds
+const CREAM_MAIN = "linear-gradient(180deg, #fdfbf7 0%, #f9f4ec 40%, #f4ece0 75%, #efe5d6 100%)";
+const CREAM_HERO = "linear-gradient(180deg, #fbf7f1 0%, #f8ebd9 30%, #f5dfc6 60%, #eed2b9 85%, #fdfbf7 100%)";
+
+/* ============================================================
+   Page Component with URL Route Parameters
+============================================================ */
+interface PageProps {
+  params: Promise<{
+    eventId?: string;
+    invitationtype?: string;
+    guestname?: string;
+  }>;
+}
+
+export default function WeddingPage({ params }: PageProps) {
+  const rawParams = (use(params) || {}) as Record<string, string | undefined>;
+
+  const rawEventId = rawParams.eventId || "";
+  const rawTypeParam = rawParams.invitationtype || "";
+  const rawGuestParam = rawParams.guestname || "";
+
+  const eventIdNum = Number(rawEventId) || EVENT.id;
+
+  const decodedGuestName = rawGuestParam
+    ? decodeURIComponent(rawGuestParam).trim()
+    : "";
+
+  const cleanParamType = decodeURIComponent(rawTypeParam).trim().toLowerCase();
+  const initialType = cleanParamType.includes("family")
+    ? "family"
+    : cleanParamType.includes("couple")
+    ? "couple"
+    : "single";
+
+  const defaultGuestCount = initialType === "family" ? 4 : initialType === "couple" ? 2 : 1;
+
+  const [revealed, setRevealed] = useState(false);
+  const [guestName, setGuestName] = useState(decodedGuestName || "Guest");
+  const [invitationType, setInvitationType] = useState<string>(initialType);
+  const [invitation, setInvitation] = useState<WeddingInvitationRecord | null>(null);
+  const [guestCount, setGuestCount] = useState<number>(defaultGuestCount);
+
+  // Load invitation record from Supabase
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadInvitation() {
+      const sb = getSb();
+      if (!sb) return;
+
+      try {
+        let found: WeddingInvitationRecord | null = null;
+
+        // 1. If rawEventId is a numeric ID, try finding by wedding_invitation_id first
+        const num = Number(rawEventId);
+        if (!isNaN(num) && num > 0) {
+          const { data, error } = await sb
+            .from("wedding_invitations")
+            .select("*")
+            .eq("wedding_invitation_id", num)
+            .maybeSingle();
+
+          if (!error && data) {
+            found = data as WeddingInvitationRecord;
+          }
+        }
+
+        // 2. Try finding by event_id + guest_name
+        if (!found && decodedGuestName && decodedGuestName !== "Guest") {
+          const primaryName = decodedGuestName.split(/[&+]|\band\b|\bfamily\b/i)[0].trim();
+          const { data, error } = await sb
+            .from("wedding_invitations")
+            .select("*")
+            .eq("event_id", eventIdNum)
+            .ilike("guest_name", `%${primaryName || decodedGuestName}%`)
+            .maybeSingle();
+
+          if (!error && data) {
+            found = data as WeddingInvitationRecord;
+          }
+        }
+
+        // 3. Try finding by guest_token
+        if (!found && rawEventId) {
+          const { data, error } = await sb
+            .from("wedding_invitations")
+            .select("*")
+            .eq("guest_token", rawEventId)
+            .maybeSingle();
+
+          if (!error && data) {
+            found = data as WeddingInvitationRecord;
+          }
+        }
+
+        if (isMounted && found) {
+          setInvitation(found);
+          if (found.guest_name) {
+            setGuestName(found.guest_name);
+          }
+          if (found.number_of_guests) {
+            setGuestCount(found.number_of_guests);
+          }
+          if (found.invitation_type) {
+            const dbType = found.invitation_type.trim().toLowerCase();
+            if (dbType.includes("family")) setInvitationType("family");
+            else if (dbType.includes("couple")) setInvitationType("couple");
+            else setInvitationType("single");
+          }
+        }
+      } catch (err) {
+        console.error("Error loading invitation from Supabase:", err);
+      }
+    }
+
+    loadInvitation();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [eventIdNum, decodedGuestName, rawEventId]);
+
+  const when = useMemo(() => new Date(EVENT.dateISO), []);
+  const dateText = when.toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
+  const [lightbox, setLightbox] = useState<{ c: number; p: number } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const toggleMusic = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (isPlaying) {
+      a.pause();
+      setIsPlaying(false);
+    } else {
+      a.play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
+    }
+  };
+
+  return (
+    <main
+      className={`${serif.className} relative min-h-screen overflow-x-hidden text-[#2e241c]`}
+      style={{ background: CREAM_MAIN }}
+    >
+      <audio ref={audioRef} src={MUSIC_SRC} loop preload="auto" />
+
+      {/* Floating background music mute/unmute button on right side */}
+      <AnimatePresence>
+        {revealed && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.8 }}
+            whileTap={{ scale: 0.9 }}
+            onClick={toggleMusic}
+            aria-label={isPlaying ? "Mute music" : "Play music"}
+            className="fixed bottom-6 right-5 z-50 flex h-12 w-12 items-center justify-center rounded-full border border-[#c89e65]/80 bg-white/90 text-[#8c672d] shadow-[0_8px_25px_rgba(70,50,30,0.18)] backdrop-blur-md transition hover:bg-white sm:bottom-8 sm:right-7 sm:h-13 sm:w-13"
+          >
+            {isPlaying && (
+              <motion.span
+                className="absolute inset-0 rounded-full border border-[#c89e65]"
+                animate={{ scale: [1, 1.45], opacity: [0.65, 0] }}
+                transition={{ duration: 1.8, repeat: Infinity, ease: "easeOut" }}
+              />
+            )}
+            {isPlaying ? <Volume2 size={22} /> : <VolumeX size={22} className="text-[#a89282]" />}
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      <Opening
+        names={[COUPLE.one, COUPLE.two]}
+        dateText={dateText}
+        onOpen={() => {
+          window.scrollTo({ top: 0 });
+          setRevealed(true);
+          const a = audioRef.current;
+          if (a) {
+            a.volume = 0.5;
+            a.play()
+              .then(() => setIsPlaying(true))
+              .catch(() => setIsPlaying(false));
+          }
+        }}
+      />
+
+      <motion.div
+        initial={{ opacity: 0, filter: "blur(14px)", scale: 1.05 }}
+        animate={revealed ? { opacity: 1, filter: "blur(0px)", scale: 1 } : {}}
+        transition={{ duration: 2.5, ease: "easeOut" }}
+      >
+        {/* ---------------- FIRST PAGE: SAVE THE DATE INVITATION CARD ---------------- */}
+        <section
+          className="relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden px-4 py-8 sm:py-12"
+          style={{ background: CREAM_HERO }}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 16 }}
+            animate={revealed ? { opacity: 1, scale: 1, y: 0 } : {}}
+            transition={{ duration: 1.2, ease: "easeOut" }}
+            className="relative z-10 flex flex-col items-center justify-center"
+          >
+            <div className="relative aspect-[16/9] w-full max-w-[min(94vw,calc(90dvh*16/9))] max-h-[90dvh] overflow-hidden rounded-2xl sm:rounded-3xl border border-[#e5d8c5]/80 bg-white shadow-[0_20px_50px_rgba(70,50,30,0.16)]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/images/wedding4/open1.jpeg"
+                alt="Save The Date - Viraj & Sachini"
+                className="h-full w-full object-contain"
+              />
+            </div>
+          </motion.div>
+        </section>
+
+        {/* ---------------- SECOND PAGE: FORMAL INVITATION CARD ---------------- */}
+        <section
+          className="relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden px-4 py-12 sm:py-16"
+          style={{ background: CREAM_MAIN }}
+        >
+          <div className="relative z-10 mx-auto w-full max-w-lg rounded-3xl border border-[#e5d8c5]/90 bg-white/85 p-6 sm:p-10 text-center shadow-[0_20px_50px_rgba(50,35,20,0.12)] backdrop-blur-md">
+            {/* Couple portrait illustration */}
+            <div className="mx-auto mb-6 h-36 w-36 overflow-hidden rounded-full border-4 border-[#e5d8c5] shadow-md">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/images/wedding4/WhatsApp Image 2026-11-24 at 8.16.39 PM (1).jpeg"
+                alt="Viraj & Sachini"
+                className="h-full w-full object-cover"
+              />
+            </div>
+
+            <p className={`${cormorant.className} text-xs uppercase tracking-[0.3em] text-[#a67c38]`}>
+              Together With Their Families
+            </p>
+            <h2 className={`${cinzel.className} my-4 text-3xl font-medium tracking-[0.2em] text-[#2e241c] sm:text-4xl md:text-5xl`}>
+              VIRAJ <span className={`${cormorant.className} font-light italic lowercase tracking-normal text-2xl sm:text-3xl text-[#b88a44]`}>and</span> SACHINI
+            </h2>
+            <p className={`${cormorant.className} mx-auto max-w-xs text-sm leading-relaxed text-[#6a5749]`}>
+              Request the pleasure of your company as they unite in marriage and celebrate the beginning of their new life together.
+            </p>
+
+            <div className="my-6 border-y border-[#e5d8c5] py-4">
+              <p className={`${serif.className} text-lg font-medium text-[#8c672d]`}>
+                Saturday, December 12, 2026
+              </p>
+              <p className="mt-1 text-xs tracking-wider text-[#6a5749]">
+                9:00 AM ONWARDS · PORUWA CEREMONY 9:24 AM
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-[#2e241c]">Hotel Green Court</p>
+              <p className="text-xs text-[#7a6452]">Homagama, Sri Lanka</p>
+            </div>
+          </div>
+        </section>
+
+        {/* ---------------- CHAPTERS (Couples photos) ---------------- */}
+        {CHAPTERS.map((chapter, ci) => (
+          <Chapter
+            key={chapter.title}
+            index={ci}
+            chapter={chapter}
+            onOpen={(p) => setLightbox({ c: ci, p })}
+          />
+        ))}
+
+        {/* ---------------- DETAILS & COUNTDOWN (ORIGINAL UNZOOMED PHOTO: BG1 FOR MOBILE VIEW) ---------------- */}
+        <section className="relative flex min-h-[100dvh] w-full flex-col items-center justify-center overflow-hidden bg-[#faf8f5] px-4 py-12 sm:py-16">
+          {/* Full unzoomed original photo across screen, perfectly fitted for mobile view */}
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+            <div
+              className="h-full w-full max-w-[min(100vw,calc(100dvh*736/1308))] bg-contain bg-center bg-no-repeat opacity-90"
+              style={{ backgroundImage: "url('/images/wedding4/bg1.jpeg')" }}
+            />
+          </div>
+
+          <div className="relative z-10 mx-auto w-full max-w-4xl text-center">
+            <p className="mb-2 text-xs uppercase tracking-[0.35em] text-[#a67c38]">
+              Save The Date
+            </p>
+            <h2 className={`${script.className} mb-6 text-5xl text-[#2e241c] drop-shadow-sm sm:mb-8 sm:text-6xl`}>
+              When &amp; Where
+            </h2>
+
+            <div className="grid gap-3 sm:gap-5 md:grid-cols-3">
+              {[
+                { icon: <CalendarDays size={24} className="sm:h-[26px] sm:w-[26px]" />, title: "Date", text: dateText },
+                { icon: <Clock size={24} className="sm:h-[26px] sm:w-[26px]" />, title: "Time", text: EVENT.timeDisplay },
+                { icon: <MapPin size={24} className="sm:h-[26px] sm:w-[26px]" />, title: "Venue", text: EVENT.venue },
+              ].map((c, i) => (
+                <motion.div
+                  key={c.title}
+                  initial={{ opacity: 0, y: 30 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: i * 0.12 }}
+                  whileHover={{ y: -4 }}
+                  className="rounded-2xl sm:rounded-3xl border border-[#e5d8c5] bg-white/80 p-4 sm:p-7 text-[#2e241c] shadow-[0_15px_35px_rgba(70,50,30,0.08)] backdrop-blur-md"
+                >
+                  <div className="mb-2 sm:mb-4 flex justify-center text-[#b88a44]">{c.icon}</div>
+                  <h3 className="mb-1 sm:mb-2 text-lg sm:text-xl font-medium text-[#2e241c]">{c.title}</h3>
+                  <p className="text-xs sm:text-sm leading-5 sm:leading-6 text-[#6a5749]">{c.text}</p>
+                </motion.div>
+              ))}
+            </div>
+
+            <Countdown target={when.getTime()} />
+
+            <motion.a
+              href={EVENT.mapUrl}
+              target="_blank"
+              rel="noreferrer"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="mt-8 sm:mt-10 inline-block rounded-full border border-[#b88a44] bg-[#b88a44] px-8 py-3.5 text-xs tracking-[0.25em] text-white shadow-lg backdrop-blur-md transition hover:bg-[#a67c38]"
+            >
+              GET DIRECTIONS
+            </motion.a>
+          </div>
+        </section>
+
+        {/* ---------------- RSVP & GUEST WISHES (BG2 REPEATING SEAMLESSLY AS WISHES GROW) ---------------- */}
+        <div
+          className="relative min-h-[100dvh] w-full bg-[#fdfbf7] bg-repeat-y"
+          style={{
+            backgroundImage: "url('/images/wedding4/bg2.jpeg')",
+            backgroundSize: "min(100vw, 480px) auto",
+            backgroundPosition: "top center",
+          }}
+        >
+          <div className="relative z-10">
+            {/* ---------------- RSVP (WhatsApp & Database) ---------------- */}
+            <section className="px-4 pb-16 pt-12 sm:px-6 sm:pb-20 sm:pt-16">
+              <div className="mx-auto max-w-md rounded-3xl border border-[#e5d8c5] bg-white/90 p-6 sm:p-8 shadow-[0_15px_40px_rgba(70,50,30,0.08)] backdrop-blur-md text-[#2e241c]">
+                <p className="mb-2 text-center text-xs uppercase tracking-[0.35em] text-[#a67c38]">Kindly reply</p>
+                <h2 className={`${script.className} mb-7 text-center text-5xl text-[#2e241c]`}>Will you join us?</h2>
+                <Rsvp
+                  eventId={eventIdNum}
+                  guestName={guestName}
+                  onGuestNameChange={setGuestName}
+                  guestCount={guestCount}
+                  onGuestCountChange={setGuestCount}
+                  invitation={invitation}
+                  invitationType={invitationType}
+                  onInvitationUpdate={setInvitation}
+                />
+              </div>
+            </section>
+
+            {/* ---------------- WISHES ---------------- */}
+            <section className="px-4 pb-24 sm:px-6 sm:pb-28">
+              <div className="mx-auto max-w-2xl">
+                <p className="mb-2 text-center text-xs uppercase tracking-[0.35em] text-[#a67c38]">Guest wishes</p>
+                <h2 className={`${script.className} mb-8 text-center text-5xl text-[#2e241c]`}>Words from the heart</h2>
+                <Wishes
+                  eventId={eventIdNum}
+                  guestName={guestName}
+                  onGuestNameChange={setGuestName}
+                  invitation={invitation}
+                  invitationType={invitationType}
+                  onInvitationUpdate={setInvitation}
+                />
+              </div>
+            </section>
+
+            {/* ---------------- FOOTER & THANK YOU ---------------- */}
+            <footer className="relative overflow-hidden px-6 pb-12 pt-8 text-center">
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[#b88a44]/40 to-transparent" />
+              <div className="mx-auto mb-4 h-24 w-24 overflow-hidden rounded-full border-2 border-[#e5d8c5] shadow-sm">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/wedding4/thanku.jpeg"
+                  alt="Thank you"
+                  className="h-full w-full object-cover"
+                />
+              </div>
+              <p className={`${cinzel.className} text-2xl font-medium tracking-[0.2em] text-[#2e241c] sm:text-3xl`}>
+                {COUPLE.one} <span className={`${cormorant.className} font-light italic lowercase tracking-normal text-xl sm:text-2xl text-[#b88a44]`}>and</span> {COUPLE.two}
+              </p>
+              <p className="mt-2 text-xs tracking-[0.3em] text-[#8a796c]">WITH LOVE, JOY &amp; FOREVER</p>
+            </footer>
+          </div>
+        </div>
+      </motion.div>
+
+      <Lightbox state={lightbox} setState={setLightbox} />
+    </main>
+  );
+}
+
+/* ============================================================
+   Chapter with photos
+============================================================ */
+function Photo({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className={`flex items-center justify-center bg-gradient-to-br from-[#ebd2b9] to-[#d8af93] text-[#8c672d] ${className ?? ""}`}>
+        <Heart size={28} fill="currentColor" />
+      </div>
+    );
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src} alt={alt} onError={() => setFailed(true)} className={className} />;
+}
+
+const TILTS = [-3, 2, -2, 3, -2, 2, -3, 2];
+const DROPS = ["0px", "16px", "8px", "14px", "0px", "12px", "6px", "10px"];
+
+function Chapter({
+  index,
+  chapter,
+  onOpen,
+}: {
+  index: number;
+  chapter: (typeof CHAPTERS)[number];
+  onOpen: (photo: number) => void;
+}) {
+  return (
+    <section className="px-5 py-16">
+      <div className="mx-auto max-w-4xl text-center">
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-60px" }}
+          transition={{ duration: 0.8 }}
+        >
+          <p className="mb-2 text-xs uppercase tracking-[0.35em] text-[#a67c38]">
+            Moments of Love
+          </p>
+          <h2 className={`${script.className} text-5xl text-[#2e241c] sm:text-6xl`}>{chapter.title}</h2>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-7 text-[#6a5749]">{chapter.caption}</p>
+        </motion.div>
+
+        <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-6">
+          {chapter.photos.map((src, i) => (
+            <motion.button
+              key={src}
+              type="button"
+              onClick={() => onOpen(i)}
+              initial={{ opacity: 0, y: 40, rotate: 0 }}
+              whileInView={{ opacity: 1, y: 0, rotate: TILTS[i % TILTS.length] }}
+              viewport={{ once: true, margin: "-40px" }}
+              transition={{ delay: i * 0.1, duration: 0.8 }}
+              whileHover={{ scale: 1.06, rotate: 0, zIndex: 5 }}
+              whileTap={{ scale: 0.97 }}
+              style={{ marginTop: DROPS[i % DROPS.length] }}
+              className="relative overflow-hidden rounded-xl border-[4px] border-white bg-white shadow-[0_12px_28px_rgba(70,50,30,0.12)] sm:border-6"
+              aria-label={`${chapter.title} photo ${i + 1}`}
+            >
+              <Photo src={src} alt={`${chapter.title} ${i + 1}`} className="aspect-[3/4] w-full object-cover" />
+            </motion.button>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Lightbox({
+  state,
+  setState,
+}: {
+  state: { c: number; p: number } | null;
+  setState: (s: { c: number; p: number } | null) => void;
+}) {
+  const photos = state ? CHAPTERS[state.c].photos : [];
+  const go = (d: number) =>
+    state && setState({ c: state.c, p: (state.p + d + photos.length) % photos.length });
+
+  useEffect(() => {
+    if (!state) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setState(null);
+      if (e.key === "ArrowRight") go(1);
+      if (e.key === "ArrowLeft") go(-1);
+    };
+    window.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
+
+  return (
+    <AnimatePresence>
+      {state && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => setState(null)}
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/90 p-4"
+        >
+          <button type="button" aria-label="Close" onClick={() => setState(null)} className="absolute right-5 top-5 text-white/80">
+            <X size={28} />
+          </button>
+          <button
+            type="button"
+            aria-label="Previous"
+            onClick={(e) => {
+              e.stopPropagation();
+              go(-1);
+            }}
+            className="absolute left-3 text-white/80 md:left-8"
+          >
+            <ChevronLeft size={40} />
+          </button>
+          <button
+            type="button"
+            aria-label="Next"
+            onClick={(e) => {
+              e.stopPropagation();
+              go(1);
+            }}
+            className="absolute right-3 text-white/80 md:right-8"
+          >
+            <ChevronRight size={40} />
+          </button>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`${state.c}-${state.p}`}
+              initial={{ opacity: 0, scale: 0.92 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ duration: 0.25 }}
+              onClick={(e) => e.stopPropagation()}
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              onDragEnd={(_, info) => {
+                if (info.offset.x < -80) go(1);
+                if (info.offset.x > 80) go(-1);
+              }}
+            >
+              <Photo
+                src={photos[state.p]}
+                alt=""
+                className="max-h-[82vh] max-w-full rounded-xl object-contain"
+              />
+            </motion.div>
+          </AnimatePresence>
+          <p className="absolute bottom-5 text-xs tracking-widest text-white/70">
+            {CHAPTERS[state.c].title} · {state.p + 1} / {photos.length}
+          </p>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ============================================================
+   Countdown
+============================================================ */
+function Countdown({ target }: { target: number }) {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (now === null) return <div className="mt-10 h-20" />;
+  const diff = Math.max(0, target - now);
+  const units = [
+    ["Days", Math.floor(diff / 86400000)],
+    ["Hours", Math.floor((diff / 3600000) % 24)],
+    ["Min", Math.floor((diff / 60000) % 60)],
+    ["Sec", Math.floor((diff / 1000) % 60)],
+  ] as const;
+  return (
+    <div className="mx-auto mt-6 sm:mt-10 grid max-w-sm grid-cols-4 gap-2 sm:gap-3">
+      {units.map(([label, v]) => (
+        <div
+          key={label}
+          className="rounded-2xl border border-[#e5d8c5] bg-white/80 py-2.5 sm:py-3.5 shadow-[0_8px_25px_rgba(70,50,30,0.08)] backdrop-blur-md"
+        >
+          <div className="text-2xl font-semibold tabular-nums text-[#2e241c]">{String(v).padStart(2, "0")}</div>
+          <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.2em] text-[#b88a44]">{label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatInvitationType(t?: string): "Single" | "Couple" | "Family" {
+  const lower = (t || "").toLowerCase();
+  if (lower.includes("family") || lower === "3") return "Family";
+  if (lower.includes("couple") || lower === "2") return "Couple";
+  return "Single";
+}
+
+/* ============================================================
+   RSVP – saves RSVP to public.wedding_invitations & optional WhatsApp
+============================================================ */
+function Rsvp({
+  eventId,
+  guestName,
+  onGuestNameChange,
+  guestCount,
+  onGuestCountChange,
+  invitation,
+  invitationType,
+  onInvitationUpdate,
+}: {
+  eventId: number;
+  guestName: string;
+  onGuestNameChange: (n: string) => void;
+  guestCount: number;
+  onGuestCountChange: (c: number) => void;
+  invitation: WeddingInvitationRecord | null;
+  invitationType: string;
+  onInvitationUpdate?: (inv: WeddingInvitationRecord) => void;
+}) {
+  const [choice, setChoice] = useState<"yes" | "no" | null>(() => {
+    if (invitation?.rsvp_status === "accepted") return "yes";
+    if (invitation?.rsvp_status === "declined") return "no";
+    return null;
+  });
+
+  // Calculate max allowed guests respecting wedding_attending_count_check (<= number_of_guests)
+  const maxAllowed = Math.max(
+    1,
+    invitation?.number_of_guests ??
+      (formatInvitationType(invitationType) === "Family"
+        ? 4
+        : formatInvitationType(invitationType) === "Couple"
+        ? 2
+        : 1)
+  );
+
+  const [count, setCount] = useState<number>(() => {
+    const initial = invitation?.attending_count ?? guestCount;
+    return Math.min(Math.max(1, initial), maxAllowed);
+  });
+  const [sent, setSent] = useState(Boolean(invitation?.responded_at));
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (invitation) {
+      if (invitation.rsvp_status === "accepted") setChoice("yes");
+      else if (invitation.rsvp_status === "declined") setChoice("no");
+
+      const lim = Math.max(1, invitation.number_of_guests ?? maxAllowed);
+      if (typeof invitation.attending_count === "number" && invitation.attending_count > 0) {
+        setCount(Math.min(invitation.attending_count, lim));
+      } else if (invitation.number_of_guests) {
+        setCount(invitation.number_of_guests);
+      }
+    }
+  }, [invitation, maxAllowed]);
+
+  const send = async () => {
+    const trimmed = guestName.trim();
+    if (!choice || !trimmed || submitting) return;
+    setSubmitting(true);
+    setError("");
+
+    const sb = getSb();
+    const status = choice === "yes" ? "accepted" : "declined";
+    // Bound attending_count between 0 and number_of_guests to fulfill constraint
+    const maxLimit = Math.max(1, invitation?.number_of_guests ?? maxAllowed);
+    const attendingCount = choice === "yes" ? Math.min(count, maxLimit) : 0;
+    const nowISO = new Date().toISOString();
+
+    if (sb) {
+      try {
+        // 1. If we have a known wedding_invitation_id, update directly
+        if (invitation?.wedding_invitation_id) {
+          const { data, error: updateErr } = await sb
+            .from("wedding_invitations")
+            .update({
+              rsvp_status: status,
+              attending_count: attendingCount,
+              responded_at: nowISO,
+            })
+            .eq("wedding_invitation_id", invitation.wedding_invitation_id)
+            .select("*")
+            .single();
+
+          if (updateErr) {
+            console.error("RSVP update error in wedding_invitations:", updateErr.message);
+            setError(updateErr.message);
+          } else if (data && onInvitationUpdate) {
+            onInvitationUpdate(data as WeddingInvitationRecord);
+          }
+        } else {
+          // 2. Otherwise match by event_id + guest_name in wedding_invitations
+          const primary = trimmed.split(/[&+]|\band\b|\bfamily\b/i)[0].trim();
+          const { data: matched } = await sb
+            .from("wedding_invitations")
+            .select("wedding_invitation_id")
+            .eq("event_id", eventId)
+            .ilike("guest_name", `%${primary || trimmed}%`)
+            .limit(1);
+
+          if (matched && matched.length > 0) {
+            const { data, error: updateErr } = await sb
+              .from("wedding_invitations")
+              .update({
+                rsvp_status: status,
+                attending_count: attendingCount,
+                responded_at: nowISO,
+              })
+              .eq("wedding_invitation_id", matched[0].wedding_invitation_id)
+              .select("*")
+              .single();
+
+            if (updateErr) {
+              console.error("RSVP update error in wedding_invitations:", updateErr.message);
+              setError(updateErr.message);
+            } else if (data && onInvitationUpdate) {
+              onInvitationUpdate(data as WeddingInvitationRecord);
+            }
+          } else {
+            // Attempt insert into wedding_invitations matching all constraints
+            const typeFormatted = formatInvitationType(invitationType);
+            const token =
+              typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `token_${Date.now()}`;
+            const numGuests = Math.max(
+              count,
+              typeFormatted === "Family" ? 4 : typeFormatted === "Couple" ? 2 : 1
+            );
+
+            const { data, error: insertErr } = await sb
+              .from("wedding_invitations")
+              .insert({
+                event_id: eventId,
+                guest_name: trimmed,
+                guest_token: token,
+                invitation_type: typeFormatted,
+                number_of_guests: numGuests,
+                rsvp_status: status,
+                attending_count: attendingCount,
+                responded_at: nowISO,
+              })
+              .select("*")
+              .single();
+
+            if (insertErr) {
+              console.warn("Could not insert directly into wedding_invitations:", insertErr.message);
+            } else if (data && onInvitationUpdate) {
+              onInvitationUpdate(data as WeddingInvitationRecord);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Supabase RSVP error:", err);
+      }
+    }
+
+    // Backup notification via WhatsApp if WHATSAPP_NUMBER is configured
+    if (WHATSAPP_NUMBER) {
+      const text =
+        choice === "yes"
+          ? `Hi! This is ${trimmed}. We are attending the wedding of ${COUPLE.one} & ${COUPLE.two} 🌅 Guests: ${count}.`
+          : `Hi! This is ${trimmed}. Sorry, we can't make it to the wedding of ${COUPLE.one} & ${COUPLE.two}.`;
+      window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`, "_blank");
+    }
+
+    setSubmitting(false);
+    setSent(true);
+  };
+
+  if (sent) {
+    return (
+      <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="text-center">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#c89e65] to-[#b38243] text-white shadow-md">
+          <Check size={26} />
+        </div>
+        <h3 className="mb-2 text-2xl text-[#2e241c]">{choice === "yes" ? "We can’t wait to see you!" : "We’ll miss you"}</h3>
+        <p className="text-sm text-[#6a5749]">Your RSVP has been recorded. Thank you!</p>
+        <button
+          type="button"
+          onClick={() => setSent(false)}
+          className="mt-5 text-xs tracking-[0.2em] text-[#8c672d] underline underline-offset-4"
+        >
+          CHANGE MY REPLY
+        </button>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <input
+        value={guestName}
+        onChange={(e) => onGuestNameChange(e.target.value)}
+        maxLength={150}
+        placeholder="Your name"
+        className="w-full rounded-2xl border border-[#dfd3c1] bg-[#fdfbf7] px-4 py-3 text-sm text-[#2e241c] outline-none placeholder:text-[#9e8f80] focus:border-[#b88a44]"
+      />
+      <div className="grid grid-cols-2 gap-3">
+        {(
+          [
+            ["yes", "We’re coming 🌅"],
+            ["no", "Regretfully decline"],
+          ] as const
+        ).map(([v, label]) => (
+          <motion.button
+            key={v}
+            type="button"
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setChoice(v)}
+            className={`rounded-2xl border px-3 py-4 text-sm transition ${
+              choice === v
+                ? v === "yes"
+                  ? "border-[#b88a44] bg-gradient-to-br from-[#c89e65] to-[#b38243] text-white shadow-md"
+                  : "border-[#4a3d34] bg-[#4a3d34] text-white shadow-md"
+                : "border-[#dfd3c1] bg-[#fbf8f2] text-[#5a4a3e] hover:bg-white"
+            }`}
+          >
+            {label}
+          </motion.button>
+        ))}
+      </div>
+
+      <AnimatePresence>
+        {choice === "yes" && (
+          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+            <p className="mb-3 text-center text-xs uppercase tracking-[0.25em] text-[#a67c38]">
+              How many will attend? (Max: {maxAllowed})
+            </p>
+            <div className="flex items-center justify-center gap-6">
+              <button
+                type="button"
+                aria-label="Fewer"
+                onClick={() => {
+                  const newC = Math.max(1, count - 1);
+                  setCount(newC);
+                  onGuestCountChange(newC);
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-[#dfd3c1] text-[#2e241c] hover:bg-[#f5eee3]"
+              >
+                <Minus size={16} />
+              </button>
+              <motion.span key={count} initial={{ scale: 1.4 }} animate={{ scale: 1 }} className="w-10 text-center text-4xl text-[#2e241c]">
+                {count}
+              </motion.span>
+              <button
+                type="button"
+                aria-label="More"
+                disabled={count >= maxAllowed}
+                onClick={() => {
+                  const newC = Math.min(maxAllowed, count + 1);
+                  setCount(newC);
+                  onGuestCountChange(newC);
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-[#dfd3c1] text-[#2e241c] hover:bg-[#f5eee3] disabled:opacity-30"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <motion.button
+        type="button"
+        disabled={!choice || !guestName.trim() || submitting}
+        onClick={send}
+        whileTap={{ scale: 0.97 }}
+        className="w-full rounded-full bg-gradient-to-r from-[#c89e65] to-[#b38243] py-3 text-sm tracking-[0.25em] text-white shadow-md transition hover:brightness-105 disabled:opacity-40"
+      >
+        {submitting ? "RECORDING..." : "CONFIRM"}
+      </motion.button>
+      {error && <p className="text-center text-xs text-[#b83838]">{error}</p>}
+    </div>
+  );
+}
+
+/* ============================================================
+   Guest wishes – saved in and queried from public.wedding_invitations
+============================================================ */
+function ago(iso: string) {
+  const s = Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 86400)} d ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+function Wishes({
+  eventId,
+  guestName,
+  onGuestNameChange,
+  invitation,
+  invitationType,
+  onInvitationUpdate,
+}: {
+  eventId: number;
+  guestName: string;
+  onGuestNameChange: (n: string) => void;
+  invitation: WeddingInvitationRecord | null;
+  invitationType: string;
+  onInvitationUpdate?: (inv: WeddingInvitationRecord) => void;
+}) {
+  const [wishes, setWishes] = useState<Wish[]>([]);
+  const [message, setMessage] = useState(invitation?.wish_message ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [thanks, setThanks] = useState(false);
+  const [cooldown, setCooldown] = useState(false);
+
+  useEffect(() => {
+    if (invitation?.wish_message && !message) {
+      setMessage(invitation.wish_message);
+    }
+  }, [invitation?.wish_message]);
+
+  const load = async () => {
+    const sb = getSb();
+    if (!sb) return;
+
+    // Load wishes directly from public.wedding_invitations
+    const { data, error: fetchErr } = await sb
+      .from("wedding_invitations")
+      .select("wedding_invitation_id, guest_name, wish_message, wish_created_at")
+      .eq("event_id", eventId)
+      .not("wish_message", "is", null)
+      .order("wish_created_at", { ascending: false });
+
+    if (fetchErr) {
+      console.error("Error loading wishes from wedding_invitations:", fetchErr);
+      return;
+    }
+
+    const formatted: Wish[] = (data || [])
+      .filter((r) => typeof r.wish_message === "string" && r.wish_message.trim().length > 0)
+      .map((r) => ({
+        wish_id: r.wedding_invitation_id,
+        guest_name: r.guest_name,
+        message: r.wish_message as string,
+        created_at: r.wish_created_at || new Date().toISOString(),
+      }));
+
+    setWishes(formatted);
+  };
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 30000); // pick up other guests' wishes
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId]);
+
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const sb = getSb();
+    const n = guestName.trim();
+    const m = message.trim();
+    if (!sb) return setError("Wishes are not available right now.");
+    if (!n) return setError("Please enter your name.");
+    if (!m) return setError("Please enter your wish message.");
+    if (m.length > 500) return setError("Wish message must be 500 characters or less.");
+    if (busy || cooldown) return;
+
+    setBusy(true);
+    setError("");
+
+    const nowISO = new Date().toISOString();
+
+    try {
+      // 1. If invitation already has wedding_invitation_id, update it in wedding_invitations
+      if (invitation?.wedding_invitation_id) {
+        const { data, error: saveErr } = await sb
+          .from("wedding_invitations")
+          .update({
+            wish_message: m,
+            wish_created_at: nowISO,
+          })
+          .eq("wedding_invitation_id", invitation.wedding_invitation_id)
+          .select("*")
+          .single();
+
+        if (saveErr) {
+          console.error("Supabase wish save error in wedding_invitations:", saveErr);
+          setError("Sorry, we couldn’t save your wish. Please try again.");
+          setBusy(false);
+          return;
+        }
+
+        if (data && onInvitationUpdate) {
+          onInvitationUpdate(data as WeddingInvitationRecord);
+        }
+
+        const updatedWish: Wish = {
+          wish_id: invitation.wedding_invitation_id,
+          guest_name: n,
+          message: m,
+          created_at: nowISO,
+        };
+        setWishes((prev) => [updatedWish, ...prev.filter((w) => w.wish_id !== updatedWish.wish_id)]);
+      } else {
+        // 2. Otherwise find by event_id + guest_name in wedding_invitations
+        const primary = n.split(/[&+]|\band\b|\bfamily\b/i)[0].trim();
+        const { data: matched } = await sb
+          .from("wedding_invitations")
+          .select("wedding_invitation_id")
+          .eq("event_id", eventId)
+          .ilike("guest_name", `%${primary || n}%`)
+          .limit(1);
+
+        if (matched && matched.length > 0) {
+          const { data, error: saveErr } = await sb
+            .from("wedding_invitations")
+            .update({
+              wish_message: m,
+              wish_created_at: nowISO,
+            })
+            .eq("wedding_invitation_id", matched[0].wedding_invitation_id)
+            .select("*")
+            .single();
+
+          if (saveErr) {
+            console.error("Supabase wish save error in wedding_invitations:", saveErr);
+            setError("Sorry, we couldn’t save your wish. Please try again.");
+            setBusy(false);
+            return;
+          }
+
+          if (data && onInvitationUpdate) {
+            onInvitationUpdate(data as WeddingInvitationRecord);
+          }
+
+          const updatedWish: Wish = {
+            wish_id: matched[0].wedding_invitation_id,
+            guest_name: n,
+            message: m,
+            created_at: nowISO,
+          };
+          setWishes((prev) => [updatedWish, ...prev.filter((w) => w.wish_id !== updatedWish.wish_id)]);
+        } else {
+          // If no row exists, insert into wedding_invitations
+          const typeFormatted = formatInvitationType(invitationType);
+          const token =
+            typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `token_${Date.now()}`;
+          const numGuests = typeFormatted === "Family" ? 4 : typeFormatted === "Couple" ? 2 : 1;
+
+          const { data, error: insertErr } = await sb
+            .from("wedding_invitations")
+            .insert({
+              event_id: eventId,
+              guest_name: n,
+              guest_token: token,
+              invitation_type: typeFormatted,
+              number_of_guests: numGuests,
+              rsvp_status: "pending",
+              wish_message: m,
+              wish_created_at: nowISO,
+            })
+            .select("*")
+            .single();
+
+          if (insertErr) {
+            console.error("Supabase wish insert error in wedding_invitations:", insertErr);
+            setError("Sorry, we couldn’t save your wish. Please try again.");
+            setBusy(false);
+            return;
+          }
+
+          if (data && onInvitationUpdate) {
+            onInvitationUpdate(data as WeddingInvitationRecord);
+          }
+
+          const newWish: Wish = {
+            wish_id: data?.wedding_invitation_id ?? Date.now(),
+            guest_name: n,
+            message: m,
+            created_at: nowISO,
+          };
+          setWishes((prev) => [newWish, ...prev.filter((w) => w.wish_id !== newWish.wish_id)]);
+        }
+      }
+
+      setBusy(false);
+      setMessage("");
+      setThanks(true);
+      setCooldown(true);
+      setTimeout(() => setThanks(false), 3500);
+      setTimeout(() => setCooldown(false), 15000);
+    } catch (err) {
+      console.error("Failed to save wish:", err);
+      setError("Unable to save wish. Please try again.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <form onSubmit={send} className="space-y-3">
+        <input
+          value={guestName}
+          onChange={(e) => onGuestNameChange(e.target.value)}
+          maxLength={150}
+          placeholder="Your name"
+          className="w-full rounded-2xl border border-[#dfd3c1] bg-[#fdfbf7] px-4 py-3 text-sm text-[#2e241c] outline-none placeholder:text-[#9e8f80] focus:border-[#b88a44]"
+        />
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          maxLength={500}
+          rows={4}
+          placeholder="Write your wishes for the couple…"
+          className="w-full resize-none rounded-2xl border border-[#dfd3c1] bg-[#fdfbf7] px-4 py-3 text-sm text-[#2e241c] outline-none placeholder:text-[#9e8f80] focus:border-[#b88a44]"
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-[#8a796c]">{message.length}/500</span>
+          <motion.button
+            type="submit"
+            disabled={busy || cooldown || !message.trim() || !guestName.trim()}
+            whileTap={{ scale: 0.95 }}
+            className="flex items-center gap-2 rounded-full bg-gradient-to-r from-[#c89e65] to-[#b38243] px-6 py-2.5 text-xs tracking-[0.2em] text-white shadow-sm hover:brightness-105 disabled:opacity-40"
+          >
+            {busy ? "SENDING…" : "SEND WISH"} <Send size={14} />
+          </motion.button>
+        </div>
+        {error && <p className="text-sm text-[#b83838]">{error}</p>}
+        <AnimatePresence>
+          {thanks && (
+            <motion.p initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-sm font-medium text-[#8c672d]">
+              Thank you! Your wish is now on the wall 💛
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </form>
+
+      <div className="mt-10 space-y-4">
+        {wishes.length === 0 && <p className="text-center text-sm text-[#8a796c]">Be the first to leave a wish ✨</p>}
+        <AnimatePresence initial={false}>
+          {wishes.map((w) => (
+            <motion.div
+              key={w.wish_id}
+              layout
+              initial={{ opacity: 0, y: -16, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              className="rounded-2xl border border-[#e5d8c5] bg-white/80 p-5 text-left shadow-[0_4px_16px_rgba(70,50,30,0.04)] backdrop-blur"
+            >
+              <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#4a3d34]">{w.message}</p>
+              <div className="mt-3 flex items-center justify-between text-xs">
+                <span className="font-medium tracking-wider text-[#a67c38]">— {w.guest_name}</span>
+                <span className="text-[#998777]">{ago(w.created_at)}</span>
+              </div>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
